@@ -1,4 +1,4 @@
-import { BOARD, GROUP_COLORS, JAIL_FINE, STATION_RENT, UTILITY_MULT, groupCells, isOwnable } from '../data/board';
+import { BOARD, GROUP_COLORS, JAIL_FINE, START_BONUS, STATION_RENT, UTILITY_MULT, groupCells, isOwnable } from '../data/board';
 import { CARD_BY_ID } from '../data/cards';
 import { botDecide, tradeGain } from '../engine/bot';
 import { iconSvg, installIcons } from './icons';
@@ -30,6 +30,83 @@ function groupCellsBuilt(game: Game, group: ColorGroup): boolean {
   return groupCells(group).some((id) => game.state.cells[id].houses > 0);
 }
 
+const TYPE_LABEL: Record<string, string> = {
+  start: 'СТАРТ',
+  chance: 'ШАНС',
+  surprise: 'СЮРПРИЗ',
+  tax: 'НАЛОГ',
+  jail: 'ТЮРЬМА',
+  parking: 'ОТДЫХ',
+  gotojail: 'В ТЮРЬМУ',
+  property: '',
+  station: '',
+  utility: '',
+};
+
+const CELL_SUBTITLE: Partial<Record<string, string>> = {
+  start: 'Начало круга',
+  chance: 'Карточка',
+  surprise: 'Карточка',
+  tax: 'Обязательный платёж',
+  station: 'Вокзал',
+  utility: 'Коммунальное предприятие',
+  jail: 'Угловая клетка',
+  parking: 'Угловая клетка',
+  gotojail: 'Угловая клетка',
+};
+
+const CELL_FOOT: Partial<Record<string, string>> = {
+  chance: 'Тяните карточку — повезёт или нет?',
+  surprise: 'Тяните карточку — повезёт или нет?',
+  tax: 'Платится банку сразу.',
+  station: 'Аренда 250–2 000 ₽ — зависит от числа вокзалов.',
+  utility: 'Доход зависит от броска кубиков.',
+  jail: 'Просто в гостях — если вас не посадили.',
+  parking: 'Отдых. Здесь ничего не происходит.',
+  gotojail: 'Прямиком в тюрьму, без бонуса за Старт.',
+};
+
+const GROUP_NAMES: Record<ColorGroup, string> = {
+  brown: 'коричневая',
+  lightblue: 'голубая',
+  pink: 'розовая',
+  orange: 'оранжевая',
+  red: 'красная',
+  yellow: 'жёлтая',
+  green: 'зелёная',
+  darkblue: 'синяя',
+};
+
+const stroke = (d: string) =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+
+const UI_ICONS = {
+  menu: stroke('<path d="M4 6h16M4 12h16M4 18h16"/>'),
+  clock: stroke('<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3 4v4.5h4.5"/><path d="M12 7.5V12l3 2"/>'),
+  home: stroke('<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/>'),
+  deal: stroke('<path d="m11 17 2 2a1.4 1.4 0 0 0 2-2"/><path d="m14 14 2.5 2.5a1.4 1.4 0 0 0 2-2l-3.9-3.9a2.1 2.1 0 0 0-3 0l-.9.9a1.4 1.4 0 0 1-2-2l2.8-2.8a4.2 4.2 0 0 1 5.2-.6l.5.3a2 2 0 0 0 1.5.2L21 6"/><path d="m21 3 1 11h-2"/><path d="M3 3 2 14l6.5 6.5a1.4 1.4 0 0 0 2-2"/><path d="M3 4h8"/>'),
+  list: stroke('<rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/>'),
+};
+
+/** Фон центра поля: условная карта Москвы — река, улицы, силуэты высоток. */
+const MAP_SVG = `<svg class="map" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+  <g stroke="#d9d3f3" stroke-width=".5" fill="none">
+    <path d="M0 22 Q30 18 52 30 T100 34"/><path d="M0 48 Q24 52 48 46 T100 58"/><path d="M8 0 Q14 40 6 100"/>
+    <path d="M30 0 Q38 30 32 62 T40 100"/><path d="M62 0 Q58 34 70 58 T64 100"/><path d="M88 0 Q80 40 92 100"/>
+    <path d="M0 78 Q40 70 100 86"/><circle cx="50" cy="50" r="30"/><circle cx="50" cy="50" r="18"/>
+  </g>
+  <path d="M-4 70 C10 62 18 84 30 80 S48 92 60 86 S78 66 104 72" fill="none" stroke="#c9daf6" stroke-width="3.2" stroke-linecap="round"/>
+  <path d="M74 -4 C70 10 84 16 80 28 S88 40 104 38" fill="none" stroke="#c9daf6" stroke-width="2.6" stroke-linecap="round"/>
+  <g fill="#e2dcf7">
+    <path d="M6 30 V20 H8 V16 H9 V10 L10 4 L11 10 V16 H12 V20 H14 V30 Z"/>
+    <path d="M14 30 V24 H18 V22 H20 V30 Z"/>
+    <path d="M76 30 V20 H78 V14 H80 V8 L81 3 L82 8 V14 H84 V20 H86 V30 Z"/>
+    <path d="M70 30 V24 H74 V30 Z M88 30 V22 H92 V30 Z"/>
+    <path d="M70 96 V84 H72 V78 H74 V72 L75.5 66 L77 72 V78 H79 V84 H81 V96 Z"/>
+    <path d="M82 96 V88 H86 V84 H89 V96 Z M64 96 V90 H69 V96 Z"/>
+  </g>
+</svg>`;
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function esc(s: string): string {
@@ -53,6 +130,36 @@ function gridPos(id: number): { row: number; col: number; side: 'bottom' | 'left
 function tk(p: { token: string; color: string }): string {
   return tokenSvg(p.token, p.color);
 }
+
+/** Подписи клеток на поле: короткие, с мягкими переносами (\u00AD) в длинных словах. */
+const S = '\u00AD';
+const CELL_LABELS: Record<number, string> = {
+  1: 'Капотня',
+  3: `Бирю${S}лёво`,
+  6: 'Выхино',
+  8: 'Марьино',
+  9: 'Митино',
+  10: 'Тюрьма',
+  11: `Соколь${S}ники`,
+  13: `Измай${S}лово`,
+  14: 'Таганка',
+  16: 'Пресня',
+  18: `Хамов${S}ники`,
+  19: `Замоск${S}воречье`,
+  20: 'Парк',
+  21: `Маро${S}сейка`,
+  23: `Пок${S}ровка`,
+  24: 'Чистые пруды',
+  26: `Ники${S}тская`,
+  27: `Твер${S}ская`,
+  29: `Патри${S}аршие`,
+  30: 'В тюрьму',
+  31: `Осто${S}женка`,
+  32: `Пречи${S}стенка`,
+  34: `Кутузов${S}ский`,
+  37: 'Москва-Сити',
+  39: `Руб${S}лёвка`,
+};
 
 /** Иконка клетки (SVG из icons.ts). */
 function cellIcon(id: number, cls = 'ico'): string {
@@ -422,6 +529,9 @@ export class App {
         this.holder = game!.actor();
         return this.render();
       case 'trade':
+        if (!game || (game.state.phase !== 'roll' && game.state.phase !== 'end') || game.player(game.actor()).isBot) {
+          return this.showToast('Сделку можно предложить в начале или в конце своего хода');
+        }
         this.draft = { from: me, to: -1, give: [], get: [], giveMoney: 0, getMoney: 0 };
         this.modal = 'trade';
         return this.render();
@@ -498,23 +608,33 @@ export class App {
     const game = this.game;
     if (!game) return;
     const s = game.state;
+    const sum = s.dice ? s.dice[0] + s.dice[1] : null;
     this.root.innerHTML = `
       <div class="game">
-        <div class="topbar">
-          <button class="icon" data-act="menu">☰</button>
-          <div class="players">${s.players.map((p) => this.playerChip(p.id)).join('')}</div>
-          <button class="icon" data-act="log">📜</button>
-        </div>
+        <header class="hdr">
+          <button class="hbtn" data-act="menu" aria-label="Меню">${UI_ICONS.menu}</button>
+          <div class="logo hdr-logo"><span>МОСКВА</span><b>МАГНАТ</b></div>
+          <button class="hbtn" data-act="log" aria-label="История">${UI_ICONS.clock}</button>
+        </header>
+        <div class="players">${s.players.map((p) => this.playerChip(p.id)).join('')}</div>
         <div class="board-wrap"><div class="board">${BOARD.map((c) => this.cellHtml(c.id)).join('')}
           <div class="center">
-            <div class="logo small"><span>МОСКВА</span><b>МАГНАТ</b></div>
-            <div class="dice ${this.rolling ? 'rolling' : ''}">
-              <div class="die">${pips(this.diceShown[0])}</div><div class="die">${pips(this.diceShown[1])}</div>
+            ${MAP_SVG}
+            <div class="center-inner">
+              ${this.centerCard()}
+              <div class="dice ${this.rolling ? 'rolling' : ''}">
+                <div class="die">${pips(this.diceShown[0])}</div><div class="die">${pips(this.diceShown[1])}</div>
+              </div>
+              <div class="dice-sum">${sum && !this.rolling ? `Выпало ${sum}${s.dice![0] === s.dice![1] ? ' · дубль!' : ''}` : '&nbsp;'}</div>
             </div>
-            <div class="last-log">${esc(s.log[s.log.length - 1] ?? '')}</div>
           </div>
         </div></div>
-        <div class="panel">${this.panelHtml()}</div>
+        <div class="action">${this.panelHtml()}</div>
+        <nav class="nav">
+          <button data-act="assets">${UI_ICONS.home}<span>Имущество</span></button>
+          <button data-act="trade">${UI_ICONS.deal}<span>Сделки</span></button>
+          <button data-act="log">${UI_ICONS.list}<span>История</span></button>
+        </nav>
         ${this.needsHandoff() ? this.handoffHtml() : this.modalHtml()}
         ${this.toast ? `<div class="toast">${esc(this.toast)}</div>` : ''}
       </div>`;
@@ -524,9 +644,10 @@ export class App {
     const game = this.game!;
     const p = game.player(id);
     const active = game.state.current === id && game.state.phase !== 'gameover';
+    const mine = active && !p.isBot && this.humanCount() <= 1;
     return `<div class="chip ${active ? 'active' : ''} ${p.bankrupt ? 'out' : ''}" data-chip="${id}" style="--pc:${p.color}">
-      <span class="tok">${tk(p)}</span>
-      <span class="pn">${esc(p.name)}${p.inJail ? ' 🔒' : ''}</span>
+      ${active ? `<span class="badge">${mine ? 'ВЫ · ХОД' : 'ХОД'}</span>` : ''}
+      <div class="chip-top"><span class="tok">${tk(p)}</span><span class="pn">${esc(p.name)}${p.inJail ? ' 🔒' : ''}</span></div>
       <span class="pm">${p.bankrupt ? 'банкрот' : p.money.toLocaleString('ru-RU')}</span>
     </div>`;
   }
@@ -543,18 +664,60 @@ export class App {
       .join('');
     const houses =
       own.houses === 5 ? '<span class="hotel"></span>' : '<span class="house"></span>'.repeat(own.houses);
-    const label = c.short ?? c.name;
+    const label = CELL_LABELS[id] ?? c.short ?? c.name;
     return `<div class="cell ${side} t-${c.type} ${own.mortgaged ? 'mortgaged' : ''}" data-cell="${id}"
         style="grid-row:${row};grid-column:${col};${owner ? `--oc:${owner.color}` : ''}">
       ${c.group ? `<div class="strip" style="background:${GROUP_COLORS[c.group]}">${houses}</div>` : ''}
       <div class="cbody">
         ${c.type === 'property' ? '' : `<div class="cicon">${cellIcon(id)}</div>`}
         ${c.type === 'property' || side === 'corner' ? `<div class="cname">${esc(label)}</div>` : ''}
-        ${c.price ? `<div class="cprice">${(c.price / 1000).toLocaleString('ru-RU')}K</div>` : ''}
+        ${c.price ? `<div class="cprice">${c.price.toLocaleString('ru-RU')}</div>` : ''}
       </div>
       ${owner ? '<div class="owner-mark"></div>' : ''}
       <div class="tokens">${tokens}</div>
     </div>`;
+  }
+
+  /** Большая карточка клетки, на которой стоит текущий игрок. */
+  private centerCard(): string {
+    const game = this.game!;
+    const s = game.state;
+    const id = s.phase === 'auction' && s.auction ? s.auction.cell : this.shownPos[s.current];
+    const c = BOARD[id];
+    const own = s.cells[id];
+    const owner = own.owner !== null ? game.player(own.owner) : null;
+    let pill = TYPE_LABEL[c.type];
+    let pillStyle = '';
+    if (isOwnable(c)) {
+      if (owner) {
+        pill = `${own.mortgaged ? 'В ЗАЛОГЕ · ' : ''}${owner.name.toUpperCase()}`;
+        pillStyle = `style="--pc:${owner.color}" data-owned`;
+      } else pill = 'СВОБОДНО';
+    }
+    const sub =
+      c.type === 'property' ? `Улица · ${GROUP_NAMES[c.group!]} группа` : CELL_SUBTITLE[c.type] ?? '';
+    let foot = CELL_FOOT[c.type] ?? '';
+    if (c.type === 'property') {
+      foot = owner
+        ? `Аренда сейчас: ${formatMoney(game.rentFor(id, 7))}`
+        : `Аренда ${formatMoney(c.rent![0])}, с отелем — ${formatMoney(c.rent![5])}`;
+    } else if (c.type === 'start') foot = `+${formatMoney(START_BONUS)} за каждый проход`;
+    const amount = c.price ?? c.amount;
+    return `<div class="ccard" data-cell="${id}" style="--gc:${c.group ? GROUP_COLORS[c.group] : '#7c6cf0'}">
+      <div class="ccard-bar"></div>
+      <span class="cpill" ${pillStyle}>${esc(pill)}</span>
+      <div class="ccard-name">${esc(c.name)}</div>
+      <div class="ccard-sub">${esc(sub)}</div>
+      <div class="ccard-ill">${cellIcon(id)}</div>
+      ${amount ? `<div class="ccard-price">${formatMoney(amount)}</div>` : ''}
+      <div class="ccard-foot">${esc(foot)}</div>
+    </div>`;
+  }
+
+  private bar(p: { token: string; color: string } | null, title: string, sub: string, btns: string, wait = false): string {
+    return `<div class="who">${p ? `<div class="pedestal">${tk(p)}</div>` : ''}</div>
+      <div class="info"><div class="atitle">${title}</div><div class="asub ${wait ? 'wait' : ''}">${sub}</div></div>
+      <div class="btns">${btns}</div>`;
   }
 
   private panelHtml(): string {
@@ -562,83 +725,92 @@ export class App {
     const s = game.state;
     const me = this.me();
     const actor = game.actor();
+    const last = esc(s.log[s.log.length - 1] ?? '');
+    if (this.busy) {
+      const cur = game.player(s.current);
+      return this.bar(cur, `Ход: ${esc(cur.name)}`, last, '', true);
+    }
 
     if (s.phase === 'gameover') {
       const w = s.winner !== null ? game.player(s.winner) : null;
-      return `<div class="msg big">🏆 ${w ? `${esc(w.name)} побеждает!` : 'Игра окончена'}</div>
-        <button class="btn big green" data-act="menu">В меню</button>`;
+      return this.bar(w, w ? `🏆 ${esc(w.name)} побеждает!` : 'Игра окончена', 'Партия завершена', `<button class="btn green" data-act="menu">В меню</button>`);
     }
     const p = game.player(Math.max(0, me));
     if (me < 0) {
-      return `<div class="msg">Все люди выбыли. Боты доигрывают партию…</div>
-        <button class="btn blue" data-act="menu">В меню</button>`;
+      return this.bar(null, 'Все люди выбыли', 'Боты доигрывают партию…', `<button class="btn yellow" data-act="menu">В меню</button>`);
     }
     if (s.phase === 'auction' && s.auction) {
       const a = s.auction;
       const cell = BOARD[a.cell];
-      const leader = a.bidder !== null ? game.player(a.bidder).name : '—';
-      const head = `<div class="msg">Аукцион: <b>${esc(cell.name)}</b> (цена ${formatMoney(cell.price!)})<br>
-        Ставка: <b>${formatMoney(a.bid)}</b> · лидер: ${esc(leader)}</div>`;
-      if (actor !== me) return head + `<div class="wait">${esc(game.player(actor).name)} думает…</div>`;
-      return (
-        head +
-        `<div class="row">${[10, 100, 500]
-          .map((d) => `<button class="btn green" data-bid="${d}" ${a.bid + d > p.money ? 'disabled' : ''}>+${d}</button>`)
-          .join('')}<button class="btn red" data-act="pass">Пас</button></div>`
+      const leader = a.bidder !== null ? esc(game.player(a.bidder).name) : 'нет';
+      const title = `Аукцион: ${esc(cell.short ?? cell.name)}`;
+      const sub = `Ставка <b>${formatMoney(a.bid)}</b> · лидер: ${leader}`;
+      if (actor !== me) return this.bar(game.player(actor), title, `${sub}<br>${esc(game.player(actor).name)} думает…`, '', true);
+      return this.bar(
+        p,
+        title,
+        sub,
+        `<div class="bid-grid">${[10, 100, 500]
+          .map((d) => `<button class="btn green sm" data-bid="${d}" ${a.bid + d > p.money ? 'disabled' : ''}>+${d}</button>`)
+          .join('')}<button class="btn yellow sm" data-act="pass">Пас</button></div>`,
       );
     }
     if (s.phase === 'trade' && s.trade) {
       const o = s.trade;
-      if (o.to !== me) return `<div class="wait">${esc(game.player(o.to).name)} рассматривает обмен…</div>`;
+      if (o.to !== me) return this.bar(game.player(o.to), `${esc(game.player(o.to).name)} думает`, 'Рассматривает предложение обмена…', '', true);
       const list = (cells: number[], money: number) =>
-        [...cells.map((id) => esc(BOARD[id].name)), money ? formatMoney(money) : ''].filter(Boolean).join(', ') || 'ничего';
-      return `<div class="msg"><b>${esc(game.player(o.from).name)}</b> предлагает обмен:<br>
-          Вы получаете: <b>${list(o.giveCells, o.giveMoney)}</b><br>
-          Вы отдаёте: <b>${list(o.getCells, o.getMoney)}</b></div>
-        <div class="row"><button class="btn green" data-act="acceptTrade">Принять</button>
-        <button class="btn red" data-act="rejectTrade">Отклонить</button></div>`;
+        [...cells.map((id) => esc(BOARD[id].short ?? BOARD[id].name)), money ? formatMoney(money) : ''].filter(Boolean).join(', ') || 'ничего';
+      return this.bar(
+        game.player(o.from),
+        `Обмен от ${esc(game.player(o.from).name)}`,
+        `Получаете: <b>${list(o.giveCells, o.giveMoney)}</b><br>Отдаёте: <b>${list(o.getCells, o.getMoney)}</b>`,
+        `<button class="btn green" data-act="acceptTrade">Принять</button><button class="btn yellow" data-act="rejectTrade">Отклонить</button>`,
+      );
     }
     if (actor !== me) {
-      return `<div class="wait">Ходит ${esc(game.player(actor).name)}…</div>`;
+      return this.bar(game.player(actor), `Ходит ${esc(game.player(actor).name)}`, last, '', true);
     }
 
-    const tradeBtn = `<button class="btn yellow" data-act="trade">🤝 Обмен</button>`;
-    const assets = `<button class="btn blue" data-act="assets">🏠 Имущество</button>`;
-    const whose =
-      this.humanCount() > 1 ? `<div class="turn-of" style="--pc:${p.color}">${tk(p)} Ход: <b>${esc(p.name)}</b></div>` : '';
+    const title = `Ваш ход, ${esc(p.name)}`;
     switch (s.phase) {
       case 'roll':
         if (p.inJail) {
-          return `${whose}<div class="msg">Вы в тюрьме (попытка ${p.jailTurns + 1} из 3)</div>
-            <div class="row">
-              <button class="btn green" data-act="roll">🎲 На дубль</button>
-              <button class="btn yellow" data-act="payJail" ${p.money < JAIL_FINE ? 'disabled' : ''}>Штраф ${JAIL_FINE}</button>
-              ${p.jailFreeCards.length ? `<button class="btn blue" data-act="useJailCard">Карточка</button>` : ''}
-            </div><div class="row">${assets}${tradeBtn}</div>`;
+          return this.bar(
+            p,
+            title,
+            `Вы в тюрьме — попытка ${p.jailTurns + 1} из 3. Выбросите дубль или заплатите штраф.`,
+            `<button class="btn green" data-act="roll">Бросить на дубль</button>
+             ${
+               p.jailFreeCards.length
+                 ? `<button class="btn yellow" data-act="useJailCard">Карточка «Выйти»</button>`
+                 : `<button class="btn yellow" data-act="payJail" ${p.money < JAIL_FINE ? 'disabled' : ''}>Штраф ${formatMoney(JAIL_FINE)}</button>`
+             }`,
+          );
         }
-        return `${whose}<button class="btn huge green" data-act="roll">🎲 Бросить кубики</button><div class="row">${assets}${tradeBtn}</div>`;
+        return this.bar(p, title, s.extraRoll ? 'Дубль! Бросайте ещё раз.' : 'Бросьте кубики, чтобы сделать ход.', `<button class="btn green big" data-act="roll">Бросить кубики</button>`);
       case 'buy': {
         const cell = BOARD[p.position];
-        return `<div class="msg">Купить <b>${esc(cell.name)}</b>?</div>
-          <div class="row">
-            <button class="btn green" data-act="buy" ${p.money < cell.price! ? 'disabled' : ''}>Купить ${formatMoney(cell.price!)}</button>
-            <button class="btn red" data-act="decline">Аукцион</button>
-          </div>
-          <div class="row"><button class="btn ghost" data-cell="${cell.id}">Подробнее</button></div>`;
+        const enough = p.money >= cell.price!;
+        return this.bar(
+          p,
+          title,
+          enough ? 'Участок свободен — можно купить.' : 'Не хватает денег. Участок уйдёт на аукцион.',
+          `<button class="btn green" data-act="buy" ${enough ? '' : 'disabled'}>Купить за ${formatMoney(cell.price!)}</button>
+           <button class="btn yellow" data-act="decline">Пропустить</button>`,
+        );
       }
       case 'debt': {
         const d = s.debts[0];
-        return `<div class="msg">Нужно заплатить <b>${formatMoney(d.amount)}</b>${
-          d.creditor !== null ? ` игроку ${esc(game.player(d.creditor).name)}` : ' банку'
-        }. Продайте дома или заложите улицы.</div>
-          <div class="row">
-            <button class="btn green" data-act="payDebt" ${p.money < d.amount ? 'disabled' : ''}>Оплатить</button>
-            ${assets}
-            <button class="btn red" data-act="bankrupt">Банкрот</button>
-          </div>`;
+        return this.bar(
+          p,
+          `Долг ${formatMoney(d.amount)}`,
+          `${d.creditor !== null ? `Игроку ${esc(game.player(d.creditor).name)}` : 'Банку'}. Продайте дома или заложите улицы в «Имуществе».`,
+          `<button class="btn green" data-act="payDebt" ${p.money < d.amount ? 'disabled' : ''}>Оплатить</button>
+           <button class="btn red" data-act="bankrupt">Банкрот</button>`,
+        );
       }
       case 'end':
-        return `${whose}<button class="btn huge yellow" data-act="endTurn">Завершить ход ➜</button><div class="row">${assets}${tradeBtn}</div>`;
+        return this.bar(p, title, last, `<button class="btn green big" data-act="endTurn">Завершить ход</button>`);
       default:
         return '';
     }
