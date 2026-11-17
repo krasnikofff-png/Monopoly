@@ -541,8 +541,8 @@ export class App {
         style="grid-row:${row};grid-column:${col};${owner ? `--oc:${owner.color}` : ''}">
       ${c.group ? `<div class="strip" style="background:${GROUP_COLORS[c.group]}">${houses}</div>` : ''}
       <div class="cbody">
-        <div class="cicon">${cellIcon(id)}</div>
-        ${side === 'corner' ? `<div class="cname">${esc(label)}</div>` : ''}
+        ${c.type === 'property' ? '' : `<div class="cicon">${cellIcon(id)}</div>`}
+        ${c.type === 'property' || side === 'corner' ? `<div class="cname">${esc(label)}</div>` : ''}
         ${c.price ? `<div class="cprice">${(c.price / 1000).toLocaleString('ru-RU')}K</div>` : ''}
       </div>
       ${owner ? '<div class="owner-mark"></div>' : ''}
