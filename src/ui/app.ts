@@ -2,6 +2,7 @@ import { BOARD, GROUP_COLORS, JAIL_FINE, STATION_RENT, UTILITY_MULT, groupCells,
 import { CARD_BY_ID } from '../data/cards';
 import { botDecide, tradeGain } from '../engine/bot';
 import { iconSvg, installIcons } from './icons';
+import { normalizeToken, tokenSvg } from './tokens';
 import { Game, GameError, PLAYER_COLORS, PLAYER_TOKENS, formatMoney } from '../engine/game';
 import type { Action, ColorGroup, GameEvent, GameState } from '../engine/types';
 
@@ -46,6 +47,11 @@ function gridPos(id: number): { row: number; col: number; side: 'bottom' | 'left
   if (id < 20) return { row: 11 - (id - 10), col: 1, side: 'left' };
   if (id < 30) return { row: 1, col: 1 + (id - 20), side: 'top' };
   return { row: 1 + (id - 30), col: 11, side: 'right' };
+}
+
+/** Фишка игрока в его цвете. */
+function tk(p: { token: string; color: string }): string {
+  return tokenSvg(p.token, p.color);
 }
 
 /** Иконка клетки (SVG из icons.ts). */
@@ -124,7 +130,7 @@ export class App {
             ${rows
               .map(
                 (r, i) => `<div class="setup-row" style="--pc:${PLAYER_COLORS[i]}">
-                <span class="tok">${PLAYER_TOKENS[i]}</span>
+                <span class="tok">${tokenSvg(PLAYER_TOKENS[i], PLAYER_COLORS[i])}</span>
                 <input data-name="${i}" maxlength="12" value="${esc(r.name)}" />
                 <button class="kind ${r.isBot ? 'bot' : 'human'}" data-act="toggleKind" data-id="${i}">${r.isBot ? '🤖 Бот' : '🙂 Человек'}</button>
                 <button class="del" data-act="removePlayer" data-id="${i}" ${rows.length <= 2 ? 'disabled' : ''}>✕</button>
@@ -161,6 +167,7 @@ export class App {
   }
 
   private startGame(game: Game): void {
+    for (const p of game.state.players) p.token = normalizeToken(p.token);
     this.game = game;
     this.shownPos = game.state.players.map((p) => p.position);
     if (game.state.dice) this.diceShown = game.state.dice;
@@ -518,7 +525,7 @@ export class App {
     const p = game.player(id);
     const active = game.state.current === id && game.state.phase !== 'gameover';
     return `<div class="chip ${active ? 'active' : ''} ${p.bankrupt ? 'out' : ''}" data-chip="${id}" style="--pc:${p.color}">
-      <span class="tok">${p.token}</span>
+      <span class="tok">${tk(p)}</span>
       <span class="pn">${esc(p.name)}${p.inJail ? ' 🔒' : ''}</span>
       <span class="pm">${p.bankrupt ? 'банкрот' : p.money.toLocaleString('ru-RU')}</span>
     </div>`;
@@ -532,7 +539,7 @@ export class App {
     const owner = own.owner !== null ? game.player(own.owner) : null;
     const tokens = game.state.players
       .filter((p) => !p.bankrupt && this.shownPos[p.id] === id)
-      .map((p) => `<span class="token" style="--pc:${p.color}">${p.token}</span>`)
+      .map((p) => `<span class="token">${tk(p)}</span>`)
       .join('');
     const houses =
       own.houses === 5 ? '<span class="hotel"></span>' : '<span class="house"></span>'.repeat(own.houses);
@@ -598,7 +605,7 @@ export class App {
     const tradeBtn = `<button class="btn yellow" data-act="trade">🤝 Обмен</button>`;
     const assets = `<button class="btn blue" data-act="assets">🏠 Имущество</button>`;
     const whose =
-      this.humanCount() > 1 ? `<div class="turn-of" style="--pc:${p.color}">${p.token} Ход: <b>${esc(p.name)}</b></div>` : '';
+      this.humanCount() > 1 ? `<div class="turn-of" style="--pc:${p.color}">${tk(p)} Ход: <b>${esc(p.name)}</b></div>` : '';
     switch (s.phase) {
       case 'roll':
         if (p.inJail) {
@@ -684,7 +691,7 @@ export class App {
     const p = this.game!.player(this.game!.actor());
     const why = this.game!.state.phase === 'trade' ? 'Вам предлагают обмен' : this.game!.state.phase === 'auction' ? 'Ваша ставка на аукционе' : this.game!.state.phase === 'debt' ? 'Нужно заплатить долг' : 'Ваш ход';
     return `<div class="overlay locked"><div class="modal handoff" style="--pc:${p.color}">
-      <div class="big-token">${p.token}</div>
+      <div class="big-token">${tk(p)}</div>
       <div class="msg">Передайте телефон</div>
       <div class="msg big">${esc(p.name)}</div>
       <div class="msg">${why}</div>
@@ -699,7 +706,7 @@ export class App {
     const pick = `<div class="partners">${partners
       .map(
         (p) => `<button class="partner ${d.to === p.id ? 'sel' : ''}" style="--pc:${p.color}" data-act="tradeTo" data-id="${p.id}">
-          <span>${p.token}</span>${esc(p.name)}</button>`,
+          ${tk(p)}${esc(p.name)}</button>`,
       )
       .join('')}</div>`;
     if (d.to < 0) {
@@ -808,7 +815,7 @@ export class App {
         </div>
         <table>${rows}</table>
         <div class="deed-owner">${
-          owner ? `Владелец: <b style="color:${owner.color}">${owner.token} ${esc(owner.name)}</b>${own.mortgaged ? ' · в залоге' : ''}` : isOwnable(c) ? 'Свободно' : ''
+          owner ? `Владелец: <b style="color:${owner.color}">${tk(owner)} ${esc(owner.name)}</b>${own.mortgaged ? ' · в залоге' : ''}` : isOwnable(c) ? 'Свободно' : ''
         }</div>
       </div>
       <div class="row wrap">${actions}</div>

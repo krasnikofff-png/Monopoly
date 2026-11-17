@@ -419,10 +419,16 @@ button {
   pointer-events: none;
 }
 .token {
-  font-size: calc(var(--bw) * 0.042);
-  line-height: 1;
-  filter: drop-shadow(0 0 2px var(--pc)) drop-shadow(0 2px 1px rgba(0, 0, 0, 0.4));
+  font-size: calc(var(--bw) * 0.05);
+  line-height: 0;
+  filter: drop-shadow(0 0 1.5px #fff) drop-shadow(0 2px 1px rgba(0, 0, 0, 0.35));
   animation: hop 0.14s ease-out;
+}
+.tk {
+  width: 1.3em;
+  height: 1.3em;
+  vertical-align: middle;
+  flex: none;
 }
 @keyframes hop {
   from {
@@ -708,7 +714,8 @@ button {
   border-left: 6px solid var(--pc);
 }
 .setup-row .tok {
-  font-size: 22px;
+  font-size: 30px;
+  line-height: 0;
 }
 .setup-row input {
   flex: 1;

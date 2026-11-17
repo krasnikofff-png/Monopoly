@@ -32,7 +32,7 @@ export class GameError extends Error {}
 export const MAX_TRADES_PER_TURN = 5;
 
 export const PLAYER_COLORS = ['#ff4d6d', '#3a86ff', '#2ec4b6', '#ffbe0b', '#9b5de5', '#fb5607'];
-export const PLAYER_TOKENS = ['🚗', '🎩', '🐶', '🚀', '🐱', '⛵'];
+export const PLAYER_TOKENS = ['car', 'hat', 'dog', 'rocket', 'cat', 'ship'];
 const LOG_LIMIT = 200;
 
 export function formatMoney(n: number): string {
