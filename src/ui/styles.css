@@ -1186,12 +1186,12 @@ button {
 }
 .tmoney {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 3px;
   align-items: center;
 }
 .tmoney span {
-  grid-column: span 2;
+  grid-column: span 3;
   grid-row: 1;
   text-align: center;
   font-weight: 800;

@@ -920,6 +920,22 @@ export class App {
           d.getMoney = 0;
         }
         return this.render();
+      case 'transferSend': {
+        if (!d || d.to < 0 || !game) return;
+        const action: Action = { type: 'transfer', to: d.to, amount: d.giveMoney };
+        if (!game.can(me, action)) {
+          try {
+            game.dispatch(me, action);
+          } catch (err) {
+            if (err instanceof GameError) this.showToast(err.message);
+          }
+          return;
+        }
+        this.draft = null;
+        this.modal = null;
+        void this.act(me, action);
+        return;
+      }
       case 'tradeSend': {
         if (!d || d.to < 0) return;
         const offer = { to: d.to, giveCells: d.give, getCells: d.get, giveMoney: d.giveMoney, getMoney: d.getMoney };
@@ -1675,17 +1691,20 @@ export class App {
         <div class="ttitle">${title}</div>
         <div class="tlist">${list}</div>
         <div class="tmoney">
-          <button data-money="${key}:-1000">−1K</button><button data-money="${key}:-100">−100</button>
           <span>${money.toLocaleString('ru-RU')} ₽</span>
-          <button data-money="${key}:100">+100</button><button data-money="${key}:1000">+1K</button>
+          <button data-money="${key}:-1000">−1K</button><button data-money="${key}:-100">−100</button><button data-money="${key}:-10">−10</button>
+          <button data-money="${key}:10">+10</button><button data-money="${key}:100">+100</button><button data-money="${key}:1000">+1K</button>
         </div>
         <div class="tmax">есть ${max.toLocaleString('ru-RU')} ₽</div>
       </div>`;
     };
     const partner = game.player(d.to);
-    const empty = !d.give.length && !d.get.length;
+    const noCells = !d.give.length && !d.get.length;
+    const empty = noCells && !d.giveMoney && !d.getMoney;
+    // Только свои деньги, ничего взамен — это перевод: сразу, без подтверждения.
+    const isTransfer = noCells && d.giveMoney > 0 && !d.getMoney;
     let hint = '';
-    if (partner.isBot && !empty) {
+    if (partner.isBot && !empty && !isTransfer) {
       const gain = tradeGain(game, d.to, {
         from: d.from,
         to: d.to,
@@ -1698,16 +1717,24 @@ export class App {
         gain > 0 ? `${esc(partner.name)}, похоже, согласится 👍` : `${esc(partner.name)}, скорее всего, откажется 👎`
       }</div>`;
     }
-    return `<h3>🤝 Обмен</h3>${pick}
+    return `<h3>🤝 Обмен и переводы</h3>${pick}
       <div class="tcols">
         ${side(d.from, d.give, d.giveMoney, 'give', 'Вы отдаёте')}
         ${side(d.to, d.get, d.getMoney, 'get', `${esc(partner.name)} отдаёт`)}
       </div>
-      <div class="hint">Улицы из групп с домами менять нельзя.</div>
+      <div class="hint">${
+        isTransfer
+          ? `Получатель: ${esc(partner.name)}. Деньги придут сразу, без подтверждения.`
+          : 'Чтобы просто перевести деньги — укажите сумму слева и не выбирайте улиц. Улицы из групп с домами менять нельзя.'
+      }</div>
       ${hint}
       <div class="row">
         <button class="btn ghost" data-act="close">Отмена</button>
-        <button class="btn green" data-act="tradeSend" ${empty ? 'disabled' : ''}>Предложить</button>
+        ${
+          isTransfer
+            ? `<button class="btn green" data-act="transferSend">Перевести ${formatMoney(d.giveMoney)}</button>`
+            : `<button class="btn green" data-act="tradeSend" ${empty ? 'disabled' : ''}>Предложить</button>`
+        }
       </div>`;
   }
 

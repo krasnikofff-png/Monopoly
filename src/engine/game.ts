@@ -160,6 +160,8 @@ export class Game {
         return this.unmortgage(playerId, action.cell);
       case 'proposeTrade':
         return this.proposeTrade({ ...action.offer, from: playerId });
+      case 'transfer':
+        return this.transfer(playerId, action.to, action.amount);
       case 'acceptTrade':
         return this.answerTrade(true);
       case 'rejectTrade':
@@ -811,7 +813,7 @@ export class Game {
     if (new Set([...o.giveCells, ...o.getCells]).size !== o.giveCells.length + o.getCells.length) {
       throw new GameError('Повторяющиеся клетки');
     }
-    if (!o.giveCells.length && !o.getCells.length) throw new GameError('Пустое предложение');
+    if (!o.giveCells.length && !o.getCells.length && !o.giveMoney && !o.getMoney) throw new GameError('Пустое предложение');
     const check = (cells: number[], owner: number) => {
       for (const id of cells) {
         const cell = BOARD[id];
@@ -823,6 +825,21 @@ export class Game {
     };
     check(o.giveCells, o.from);
     check(o.getCells, o.to);
+  }
+
+  /** Перевод денег другому игроку — сразу, без подтверждения. */
+  private transfer(from: number, to: number, amount: number): void {
+    const s = this.state;
+    if (s.phase !== 'roll' && s.phase !== 'end' && s.phase !== 'buy') throw new GameError('Переводить деньги можно в свой ход');
+    const target = s.players[to];
+    if (!target || target.bankrupt || to === from) throw new GameError('Неверный получатель');
+    if (!Number.isInteger(amount) || amount <= 0) throw new GameError('Укажите сумму');
+    const p = this.player(from);
+    if (amount > p.money) throw new GameError('У вас нет столько денег');
+    this.emit({ kind: 'notice', tone: 'info', title: 'Перевод', text: `${p.name} → ${target.name}`, amount, from, to });
+    this.addMoney(from, -amount);
+    this.addMoney(to, amount);
+    this.log(`Перевод: ${p.name} → ${target.name}, ${formatMoney(amount)}.`);
   }
 
   private proposeTrade(o: TradeOffer): void {

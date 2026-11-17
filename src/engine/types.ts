@@ -163,6 +163,7 @@ export type Action =
   | { type: 'mortgage'; cell: number }
   | { type: 'unmortgage'; cell: number }
   | { type: 'proposeTrade'; offer: Omit<TradeOffer, 'from'> }
+  | { type: 'transfer'; to: number; amount: number }
   | { type: 'acceptTrade' }
   | { type: 'rejectTrade' }
   | { type: 'payDebt' }

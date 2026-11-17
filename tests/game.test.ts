@@ -264,6 +264,21 @@ describe('Игровой движок', () => {
     expect(g.state.players[0].money).toBe(START_MONEY);
   });
 
+  it('перевод денег без обмена улицами', () => {
+    const g = twoPlayers();
+    g.dispatch(0, { type: 'transfer', to: 1, amount: 250 });
+    expect(g.state.players[0].money).toBe(START_MONEY - 250);
+    expect(g.state.players[1].money).toBe(START_MONEY + 250);
+    expect(g.can(0, { type: 'transfer', to: 1, amount: START_MONEY })).toBe(false); // больше, чем есть
+    expect(g.can(0, { type: 'transfer', to: 0, amount: 10 })).toBe(false); // себе
+    expect(g.can(1, { type: 'transfer', to: 0, amount: 10 })).toBe(false); // не в свой ход
+    // Просьба о деньгах — обычное предложение, партнёр решает сам.
+    g.dispatch(0, { type: 'proposeTrade', offer: { to: 1, giveCells: [], getCells: [], giveMoney: 0, getMoney: 300 } });
+    expect(g.state.phase).toBe('trade');
+    g.dispatch(1, { type: 'acceptTrade' });
+    expect(g.state.players[0].money).toBe(START_MONEY - 250 + 300);
+  });
+
   it('боты доигрывают партию до конца без ошибок', () => {
     for (let seed = 1; seed <= 30; seed++) {
       const g = Game.create(
