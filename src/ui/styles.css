@@ -670,3 +670,229 @@ button {
   max-width: 90%;
   text-align: center;
 }
+
+/* ——— Настройка игроков ——— */
+.menu-title {
+  font-weight: 800;
+  font-size: 18px;
+}
+.setup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.setup-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff;
+  border-radius: 14px;
+  padding: 6px;
+  border-left: 6px solid var(--pc);
+}
+.setup-row .tok {
+  font-size: 22px;
+}
+.setup-row input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-weight: 600;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 2px solid #e3dccb;
+}
+.setup-row .kind {
+  border: none;
+  border-radius: 10px;
+  padding: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  width: 96px;
+  flex: none;
+}
+.kind.human {
+  background: #d8f5df;
+  color: var(--green-d);
+}
+.kind.bot {
+  background: #e3ecff;
+  color: var(--blue-d);
+}
+.setup-row .del {
+  border: none;
+  background: none;
+  font-size: 16px;
+  color: #a0a7b5;
+  width: 28px;
+  flex: none;
+}
+.setup-row .del:disabled {
+  opacity: 0.3;
+}
+.hint {
+  font-size: 13px;
+  color: #6b7280;
+  text-align: center;
+  min-height: 1em;
+}
+.menu {
+  overflow: auto;
+  justify-content: flex-start;
+  padding-top: max(32px, env(safe-area-inset-top));
+}
+
+/* ——— Передача хода ——— */
+.turn-of {
+  text-align: center;
+  font-size: 15px;
+  border-radius: 10px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--pc) 18%, transparent);
+}
+.overlay.locked {
+  background: radial-gradient(circle, color-mix(in srgb, var(--pc, #3a8dff) 50%, #0d1b33), #0d1b33);
+}
+.handoff {
+  text-align: center;
+  align-items: center;
+  border: 5px solid var(--pc);
+}
+.big-token {
+  font-size: 72px;
+  animation: hop 0.6s ease-out infinite alternate;
+}
+
+/* ——— Обмен ——— */
+.partners {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+.partner {
+  border: 3px solid transparent;
+  background: #fff;
+  border-radius: 12px;
+  padding: 6px 10px;
+  font-weight: 600;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.partner.sel {
+  border-color: var(--pc);
+  background: color-mix(in srgb, var(--pc) 15%, #fff);
+}
+.tcols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.tside {
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 12px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.ttitle {
+  font-weight: 800;
+  text-align: center;
+  font-size: 14px;
+}
+.tlist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 34vh;
+  overflow: auto;
+}
+.tcell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 2px solid transparent;
+  background: #fff;
+  border-radius: 8px;
+  padding: 5px 4px;
+  font-size: 12px;
+  text-align: left;
+}
+.tcell.sel {
+  border-color: var(--green);
+  background: #e6f9eb;
+}
+.tcell:disabled {
+  opacity: 0.4;
+}
+.tcell .sw {
+  width: 6px;
+  height: 20px;
+  border-radius: 3px;
+  flex: none;
+}
+.tcell .an {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tcell i {
+  color: #a0a7b5;
+}
+.tcell .chk {
+  color: var(--green-d);
+  font-weight: 800;
+  width: 12px;
+}
+.tmoney {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  align-items: center;
+}
+.tmoney span {
+  grid-column: span 2;
+  grid-row: 1;
+  text-align: center;
+  font-weight: 800;
+  font-size: 15px;
+}
+.tmoney button {
+  border: none;
+  border-radius: 8px;
+  padding: 6px 0;
+  font-weight: 800;
+  font-size: 12px;
+  background: #fff;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.12);
+}
+.tmax {
+  font-size: 11px;
+  color: #6b7280;
+  text-align: center;
+}
+.empty {
+  font-size: 12px;
+  color: #a0a7b5;
+  text-align: center;
+  padding: 8px;
+}
+.thint {
+  text-align: center;
+  font-weight: 600;
+  border-radius: 10px;
+  padding: 6px;
+}
+.thint.ok {
+  background: #e6f9eb;
+  color: var(--green-d);
+}
+.thint.no {
+  background: #ffe9ea;
+  color: var(--red-d);
+}

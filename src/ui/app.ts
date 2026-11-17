@@ -1,12 +1,32 @@
-import { BOARD, GROUP_COLORS, JAIL_FINE, STATION_RENT, UTILITY_MULT, isOwnable } from '../data/board';
+import { BOARD, GROUP_COLORS, JAIL_FINE, STATION_RENT, UTILITY_MULT, groupCells, isOwnable } from '../data/board';
 import { CARD_BY_ID } from '../data/cards';
-import { botDecide } from '../engine/bot';
-import { Game, GameError, formatMoney } from '../engine/game';
-import type { Action, GameEvent, GameState } from '../engine/types';
+import { botDecide, tradeGain } from '../engine/bot';
+import { Game, GameError, PLAYER_COLORS, PLAYER_TOKENS, formatMoney } from '../engine/game';
+import type { Action, ColorGroup, GameEvent, GameState } from '../engine/types';
 
 const SAVE_KEY = 'moskva-magnat-save-v1';
+const SETUP_KEY = 'moskva-magnat-setup-v1';
+
+interface SetupRow {
+  name: string;
+  isBot: boolean;
+}
+
+/** Черновик предложения обмена, который собирает игрок. */
+interface TradeDraft {
+  from: number;
+  to: number;
+  give: number[];
+  get: number[];
+  giveMoney: number;
+  getMoney: number;
+}
 const STEP_MS = 140;
 const BOT_DELAY = 650;
+
+function groupCellsBuilt(game: Game, group: ColorGroup): boolean {
+  return groupCells(group).some((id) => game.state.cells[id].houses > 0);
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -67,39 +87,86 @@ export class App {
   private diceShown: [number, number] = [5, 2];
   private rolling = false;
   private botTimer: number | null = null;
+  private setup: SetupRow[];
+  private draft: TradeDraft | null = null;
+  /** Последний человек, державший телефон (для экрана передачи хода). */
+  private holder: number | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
+    this.setup = this.loadSetup();
     root.addEventListener('click', (e) => this.onClick(e));
+    root.addEventListener('input', (e) => {
+      const t = e.target as HTMLInputElement;
+      if (t.dataset.name !== undefined) this.setup[Number(t.dataset.name)].name = t.value;
+    });
     this.renderMenu();
   }
 
   // ——————————————————— Меню ———————————————————
 
+  private loadSetup(): SetupRow[] {
+    try {
+      const raw = localStorage.getItem(SETUP_KEY);
+      const rows = raw ? (JSON.parse(raw) as SetupRow[]) : null;
+      if (rows && rows.length >= 2 && rows.length <= 6) return rows;
+    } catch {
+      /* настройки по умолчанию */
+    }
+    return [
+      { name: 'Игрок', isBot: false },
+      { name: 'Олег', isBot: true },
+      { name: 'Марина', isBot: true },
+      { name: 'Тимур', isBot: true },
+    ];
+  }
+
   private renderMenu(): void {
     const hasSave = !!this.loadSave();
+    const rows = this.setup;
+    const humans = rows.filter((r) => !r.isBot).length;
     this.root.innerHTML = `
       <div class="menu">
         <div class="logo"><span>МОСКВА</span><b>МАГНАТ</b></div>
         <div class="menu-card">
-          <label>Твоё имя<input id="name" maxlength="12" value="${esc(localStorage.getItem('mm-name') ?? 'Игрок')}" /></label>
-          <label>Соперники-боты</label>
-          <div class="seg" id="bots">
-            ${[1, 2, 3].map((n) => `<button data-bots="${n}" class="${n === 3 ? 'sel' : ''}">${n}</button>`).join('')}
+          <div class="menu-title">Игроки</div>
+          <div class="setup-list">
+            ${rows
+              .map(
+                (r, i) => `<div class="setup-row" style="--pc:${PLAYER_COLORS[i]}">
+                <span class="tok">${PLAYER_TOKENS[i]}</span>
+                <input data-name="${i}" maxlength="12" value="${esc(r.name)}" />
+                <button class="kind ${r.isBot ? 'bot' : 'human'}" data-act="toggleKind" data-id="${i}">${r.isBot ? '🤖 Бот' : '🙂 Человек'}</button>
+                <button class="del" data-act="removePlayer" data-id="${i}" ${rows.length <= 2 ? 'disabled' : ''}>✕</button>
+              </div>`,
+              )
+              .join('')}
           </div>
-          <button class="btn big green" data-act="new">Новая игра</button>
+          ${rows.length < 6 ? `<button class="btn ghost" data-act="addPlayer">＋ Добавить игрока</button>` : ''}
+          <div class="hint">${
+            humans > 1 ? `Людей: ${humans} — ходите по очереди, передавая телефон.` : humans === 0 ? 'Нужен хотя бы один человек.' : ''
+          }</div>
+          <button class="btn big green" data-act="new" ${humans === 0 ? 'disabled' : ''}>Новая игра</button>
           ${hasSave ? `<button class="btn big blue" data-act="continue">Продолжить</button>` : ''}
         </div>
       </div>`;
   }
 
+  private saveSetup(): void {
+    try {
+      localStorage.setItem(SETUP_KEY, JSON.stringify(this.setup));
+    } catch {
+      /* ignore */
+    }
+  }
+
   private startNew(): void {
-    const name = (this.root.querySelector<HTMLInputElement>('#name')?.value.trim() || 'Игрок').slice(0, 12);
-    localStorage.setItem('mm-name', name);
-    const bots = Number(this.root.querySelector('#bots .sel')?.getAttribute('data-bots') ?? 3);
-    const botNames = ['Олег', 'Марина', 'Тимур'];
+    const rows = this.setup.map((r, i) => ({ ...r, name: r.name.trim().slice(0, 12) || `Игрок ${i + 1}` }));
+    if (!rows.some((r) => !r.isBot)) return;
+    this.setup = rows;
+    this.saveSetup();
     this.startGame(
-      Game.create([{ name, isBot: false }, ...botNames.slice(0, bots).map((n) => ({ name: n, isBot: true }))]),
+      Game.create(rows.map((r, i) => ({ name: r.name, isBot: r.isBot, color: PLAYER_COLORS[i], token: PLAYER_TOKENS[i] }))),
     );
   }
 
@@ -134,8 +201,30 @@ export class App {
 
   // ——————————————————— Действия ———————————————————
 
-  private human(): number {
-    return this.game!.state.players.findIndex((p) => !p.isBot);
+  private humanCount(): number {
+    return this.game!.state.players.filter((p) => !p.isBot && !p.bankrupt).length;
+  }
+
+  /** Человек, от лица которого показан интерфейс (-1, если люди выбыли). */
+  private me(): number {
+    const game = this.game!;
+    const actor = game.actor();
+    if (!game.player(actor).isBot) return actor;
+    if (this.holder !== null && !game.player(this.holder).bankrupt) return this.holder;
+    return game.state.players.findIndex((p) => !p.isBot && !p.bankrupt);
+  }
+
+  /** Нужно ли показать экран «передай телефон». */
+  private needsHandoff(): boolean {
+    const game = this.game!;
+    if (game.state.phase === 'gameover') return false;
+    const actor = game.actor();
+    if (game.player(actor).isBot || actor === this.holder) return false;
+    if (this.humanCount() <= 1) {
+      this.holder = actor;
+      return false;
+    }
+    return true;
   }
 
   private async act(playerId: number, action: Action): Promise<void> {
@@ -185,9 +274,7 @@ export class App {
           break;
         case 'trade': {
           const o = e.offer;
-          if (this.game!.player(o.from).isBot || this.game!.player(o.to).isBot) {
-            this.showToast(`${this.game!.player(o.to).name} ${e.accepted ? 'принимает' : 'отклоняет'} обмен`);
-          }
+          this.showToast(`${this.game!.player(o.to).name} ${e.accepted ? 'принимает ✅' : 'отклоняет ❌'} обмен`);
           break;
         }
         default:
@@ -280,23 +367,35 @@ export class App {
   }
 
   private onClick(e: Event): void {
-    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-act],[data-bots],[data-cell],[data-bid]');
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-act],[data-cell],[data-bid],[data-tcell],[data-money]');
     if (!t) {
-      if ((e.target as HTMLElement).classList.contains('overlay')) this.closeModal();
+      const el = e.target as HTMLElement;
+      if (el.classList.contains('overlay') && !el.classList.contains('locked')) this.closeModal();
       return;
     }
-    if (t.dataset.bots) {
-      this.root.querySelectorAll('#bots button').forEach((b) => b.classList.remove('sel'));
-      t.classList.add('sel');
-      return;
+    const game = this.game;
+    const me = game ? this.me() : -1;
+    const d = this.draft;
+    if (t.dataset.tcell && d) {
+      const id = Number(t.dataset.tcell);
+      const list = game!.state.cells[id].owner === d.from ? d.give : d.get;
+      const i = list.indexOf(id);
+      if (i >= 0) list.splice(i, 1);
+      else list.push(id);
+      return this.render();
+    }
+    if (t.dataset.money && d) {
+      const [side, delta] = t.dataset.money.split(':');
+      const key = side === 'give' ? 'giveMoney' : 'getMoney';
+      const max = game!.player(side === 'give' ? d.from : d.to).money;
+      d[key] = Math.max(0, Math.min(max, d[key] + Number(delta)));
+      return this.render();
     }
     if (t.dataset.cell) {
       this.modal = `cell:${t.dataset.cell}`;
       this.render();
       return;
     }
-    const game = this.game;
-    const me = game ? this.human() : -1;
     if (t.dataset.bid && game?.state.auction) {
       void this.act(me, { type: 'bid', amount: game.state.auction.bid + Number(t.dataset.bid) });
       return;
@@ -306,6 +405,52 @@ export class App {
     switch (act) {
       case 'new':
         return this.startNew();
+      case 'toggleKind':
+        this.setup[cell].isBot = !this.setup[cell].isBot;
+        this.saveSetup();
+        return this.renderMenu();
+      case 'removePlayer':
+        if (this.setup.length > 2) this.setup.splice(cell, 1);
+        this.saveSetup();
+        return this.renderMenu();
+      case 'addPlayer': {
+        const botNames = ['Олег', 'Марина', 'Тимур', 'Вика', 'Артём', 'Соня'];
+        const used = new Set(this.setup.map((r) => r.name));
+        const name = botNames.find((n) => !used.has(n)) ?? `Игрок ${this.setup.length + 1}`;
+        if (this.setup.length < 6) this.setup.push({ name, isBot: true });
+        this.saveSetup();
+        return this.renderMenu();
+      }
+      case 'ready':
+        this.holder = game!.actor();
+        return this.render();
+      case 'trade':
+        this.draft = { from: me, to: -1, give: [], get: [], giveMoney: 0, getMoney: 0 };
+        this.modal = 'trade';
+        return this.render();
+      case 'tradeTo':
+        if (d) {
+          d.to = cell;
+          d.get = [];
+          d.getMoney = 0;
+        }
+        return this.render();
+      case 'tradeSend': {
+        if (!d || d.to < 0) return;
+        const offer = { to: d.to, giveCells: d.give, getCells: d.get, giveMoney: d.giveMoney, getMoney: d.getMoney };
+        if (!game!.can(me, { type: 'proposeTrade', offer })) {
+          try {
+            game!.dispatch(me, { type: 'proposeTrade', offer });
+          } catch (err) {
+            if (err instanceof GameError) this.showToast(err.message);
+          }
+          return;
+        }
+        this.draft = null;
+        this.modal = null;
+        void this.act(me, { type: 'proposeTrade', offer });
+        return;
+      }
       case 'continue': {
         const s = this.loadSave();
         if (s) this.startGame(new Game(s));
@@ -318,6 +463,7 @@ export class App {
         this.modal = null;
         return this.renderMenu();
       case 'close':
+        this.draft = null;
         return this.closeModal();
       case 'assets':
         this.modal = 'assets';
@@ -372,7 +518,7 @@ export class App {
           </div>
         </div></div>
         <div class="panel">${this.panelHtml()}</div>
-        ${this.modalHtml()}
+        ${this.needsHandoff() ? this.handoffHtml() : this.modalHtml()}
         ${this.toast ? `<div class="toast">${esc(this.toast)}</div>` : ''}
       </div>`;
   }
@@ -417,17 +563,17 @@ export class App {
   private panelHtml(): string {
     const game = this.game!;
     const s = game.state;
-    const me = this.human();
+    const me = this.me();
     const actor = game.actor();
-    const p = game.player(me);
 
     if (s.phase === 'gameover') {
       const w = s.winner !== null ? game.player(s.winner) : null;
       return `<div class="msg big">🏆 ${w ? `${esc(w.name)} побеждает!` : 'Игра окончена'}</div>
         <button class="btn big green" data-act="menu">В меню</button>`;
     }
-    if (p.bankrupt) {
-      return `<div class="msg">Вы выбыли. Боты доигрывают партию…</div>
+    const p = game.player(Math.max(0, me));
+    if (me < 0) {
+      return `<div class="msg">Все люди выбыли. Боты доигрывают партию…</div>
         <button class="btn blue" data-act="menu">В меню</button>`;
     }
     if (s.phase === 'auction' && s.auction) {
@@ -459,18 +605,21 @@ export class App {
       return `<div class="wait">Ходит ${esc(game.player(actor).name)}…</div>`;
     }
 
+    const tradeBtn = `<button class="btn yellow" data-act="trade">🤝 Обмен</button>`;
     const assets = `<button class="btn blue" data-act="assets">🏠 Имущество</button>`;
+    const whose =
+      this.humanCount() > 1 ? `<div class="turn-of" style="--pc:${p.color}">${p.token} Ход: <b>${esc(p.name)}</b></div>` : '';
     switch (s.phase) {
       case 'roll':
         if (p.inJail) {
-          return `<div class="msg">Вы в тюрьме (попытка ${p.jailTurns + 1} из 3)</div>
+          return `${whose}<div class="msg">Вы в тюрьме (попытка ${p.jailTurns + 1} из 3)</div>
             <div class="row">
               <button class="btn green" data-act="roll">🎲 На дубль</button>
               <button class="btn yellow" data-act="payJail" ${p.money < JAIL_FINE ? 'disabled' : ''}>Штраф ${JAIL_FINE}</button>
               ${p.jailFreeCards.length ? `<button class="btn blue" data-act="useJailCard">Карточка</button>` : ''}
-            </div><div class="row">${assets}</div>`;
+            </div><div class="row">${assets}${tradeBtn}</div>`;
         }
-        return `<button class="btn huge green" data-act="roll">🎲 Бросить кубики</button><div class="row">${assets}</div>`;
+        return `${whose}<button class="btn huge green" data-act="roll">🎲 Бросить кубики</button><div class="row">${assets}${tradeBtn}</div>`;
       case 'buy': {
         const cell = BOARD[p.position];
         return `<div class="msg">Купить <b>${esc(cell.name)}</b>?</div>
@@ -492,7 +641,7 @@ export class App {
           </div>`;
       }
       case 'end':
-        return `<button class="btn huge yellow" data-act="endTurn">Завершить ход ➜</button><div class="row">${assets}</div>`;
+        return `${whose}<button class="btn huge yellow" data-act="endTurn">Завершить ход ➜</button><div class="row">${assets}${tradeBtn}</div>`;
       default:
         return '';
     }
@@ -516,8 +665,10 @@ export class App {
         .reverse()
         .map((l) => `<div>${esc(l)}</div>`)
         .join('')}</div><button class="btn blue" data-act="close">Закрыть</button>`;
+    } else if (this.modal === 'trade' && this.draft) {
+      body = this.tradeHtml(this.draft);
     } else if (this.modal === 'assets') {
-      const me = this.human();
+      const me = this.me();
       const owned = game.ownedBy(me);
       body = `<h3>Моё имущество</h3>
         ${owned.length ? '' : '<p>Пока ничего нет. Покупайте улицы!</p>'}
@@ -539,11 +690,93 @@ export class App {
     return `<div class="overlay"><div class="modal">${body}</div></div>`;
   }
 
+  private handoffHtml(): string {
+    const p = this.game!.player(this.game!.actor());
+    const why = this.game!.state.phase === 'trade' ? 'Вам предлагают обмен' : this.game!.state.phase === 'auction' ? 'Ваша ставка на аукционе' : this.game!.state.phase === 'debt' ? 'Нужно заплатить долг' : 'Ваш ход';
+    return `<div class="overlay locked"><div class="modal handoff" style="--pc:${p.color}">
+      <div class="big-token">${p.token}</div>
+      <div class="msg">Передайте телефон</div>
+      <div class="msg big">${esc(p.name)}</div>
+      <div class="msg">${why}</div>
+      <button class="btn big green" data-act="ready">Поехали!</button>
+    </div></div>`;
+  }
+
+  private tradeHtml(d: TradeDraft): string {
+    const game = this.game!;
+    const s = game.state;
+    const partners = game.activePlayers().filter((p) => p.id !== d.from);
+    const pick = `<div class="partners">${partners
+      .map(
+        (p) => `<button class="partner ${d.to === p.id ? 'sel' : ''}" style="--pc:${p.color}" data-act="tradeTo" data-id="${p.id}">
+          <span>${p.token}</span>${esc(p.name)}</button>`,
+      )
+      .join('')}</div>`;
+    if (d.to < 0) {
+      return `<h3>🤝 Обмен</h3><div class="msg">С кем меняемся?</div>${pick}
+        <button class="btn ghost" data-act="close">Отмена</button>`;
+    }
+    const side = (owner: number, chosen: number[], money: number, key: 'give' | 'get', title: string) => {
+      const cells = game.ownedBy(owner);
+      const list = cells.length
+        ? cells
+            .map((id) => {
+              const c = BOARD[id];
+              const built = c.group ? groupCellsBuilt(game, c.group) : false;
+              return `<button class="tcell ${chosen.includes(id) ? 'sel' : ''}" data-tcell="${id}" ${built ? 'disabled' : ''}>
+                <span class="sw" style="background:${c.group ? GROUP_COLORS[c.group] : '#8892a6'}"></span>
+                <span class="an">${cellIcon(id)} ${esc(c.short ?? c.name)}${s.cells[id].mortgaged ? ' <i>(залог)</i>' : ''}</span>
+                <span class="chk">${chosen.includes(id) ? '✔' : ''}</span>
+              </button>`;
+            })
+            .join('')
+        : '<div class="empty">Нет имущества</div>';
+      const max = game.player(owner).money;
+      return `<div class="tside">
+        <div class="ttitle">${title}</div>
+        <div class="tlist">${list}</div>
+        <div class="tmoney">
+          <button data-money="${key}:-1000">−1K</button><button data-money="${key}:-100">−100</button>
+          <span>${money.toLocaleString('ru-RU')} ₽</span>
+          <button data-money="${key}:100">+100</button><button data-money="${key}:1000">+1K</button>
+        </div>
+        <div class="tmax">есть ${max.toLocaleString('ru-RU')} ₽</div>
+      </div>`;
+    };
+    const partner = game.player(d.to);
+    const empty = !d.give.length && !d.get.length;
+    let hint = '';
+    if (partner.isBot && !empty) {
+      const gain = tradeGain(game, d.to, {
+        from: d.from,
+        to: d.to,
+        giveCells: d.give,
+        getCells: d.get,
+        giveMoney: d.giveMoney,
+        getMoney: d.getMoney,
+      });
+      hint = `<div class="thint ${gain > 0 ? 'ok' : 'no'}">${
+        gain > 0 ? `${esc(partner.name)}, похоже, согласится 👍` : `${esc(partner.name)}, скорее всего, откажется 👎`
+      }</div>`;
+    }
+    return `<h3>🤝 Обмен</h3>${pick}
+      <div class="tcols">
+        ${side(d.from, d.give, d.giveMoney, 'give', 'Вы отдаёте')}
+        ${side(d.to, d.get, d.getMoney, 'get', `${esc(partner.name)} отдаёт`)}
+      </div>
+      <div class="hint">Улицы из групп с домами менять нельзя.</div>
+      ${hint}
+      <div class="row">
+        <button class="btn ghost" data-act="close">Отмена</button>
+        <button class="btn green" data-act="tradeSend" ${empty ? 'disabled' : ''}>Предложить</button>
+      </div>`;
+  }
+
   private cellCard(id: number): string {
     const game = this.game!;
     const c = BOARD[id];
     const own = game.state.cells[id];
-    const me = this.human();
+    const me = this.me();
     const owner = own.owner !== null ? game.player(own.owner) : null;
     let rows = '';
     if (c.type === 'property') {

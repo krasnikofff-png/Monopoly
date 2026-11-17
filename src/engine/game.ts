@@ -31,8 +31,8 @@ export class GameError extends Error {}
 
 export const MAX_TRADES_PER_TURN = 5;
 
-const DEFAULT_COLORS = ['#ff4d6d', '#3a86ff', '#2ec4b6', '#ffbe0b', '#9b5de5', '#fb5607'];
-const DEFAULT_TOKENS = ['🚗', '🎩', '🐶', '🚀', '🐱', '⛵'];
+export const PLAYER_COLORS = ['#ff4d6d', '#3a86ff', '#2ec4b6', '#ffbe0b', '#9b5de5', '#fb5607'];
+export const PLAYER_TOKENS = ['🚗', '🎩', '🐶', '🚀', '🐱', '⛵'];
 const LOG_LIMIT = 200;
 
 export function formatMoney(n: number): string {
@@ -56,8 +56,8 @@ export class Game {
     const players: Player[] = setups.map((s, i) => ({
       id: i,
       name: s.name,
-      color: s.color ?? DEFAULT_COLORS[i],
-      token: s.token ?? DEFAULT_TOKENS[i],
+      color: s.color ?? PLAYER_COLORS[i],
+      token: s.token ?? PLAYER_TOKENS[i],
       isBot: s.isBot,
       money: START_MONEY,
       position: 0,
@@ -263,7 +263,7 @@ export class Game {
           this.finishAction();
           return;
         }
-        this.log(`${p.name} отсидел три хода и платит штраф ${formatMoney(JAIL_FINE)}.`);
+        this.log(`${p.name}: третья попытка не удалась — штраф ${formatMoney(JAIL_FINE)}.`);
         p.inJail = false;
         p.jailTurns = 0;
         this.charge(p.id, null, JAIL_FINE);
