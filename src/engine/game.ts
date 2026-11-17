@@ -404,7 +404,7 @@ export class Game {
       const sum = s.dice ? s.dice[0] + s.dice[1] : 7;
       const rent = this.rentFor(cell.id, sum, special);
       const owner = this.player(own.owner);
-      this.log(`${p.name} платит ${owner.name} аренду ${formatMoney(rent)} за «${cell.name}».`);
+      this.log(`Аренда за «${cell.name}»: ${p.name} → ${owner.name}, ${formatMoney(rent)}.`);
       this.charge(playerId, own.owner, rent);
       return;
     }

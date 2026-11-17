@@ -1,6 +1,7 @@
 import { BOARD, GROUP_COLORS, JAIL_FINE, STATION_RENT, UTILITY_MULT, groupCells, isOwnable } from '../data/board';
 import { CARD_BY_ID } from '../data/cards';
 import { botDecide, tradeGain } from '../engine/bot';
+import { iconSvg, installIcons } from './icons';
 import { Game, GameError, PLAYER_COLORS, PLAYER_TOKENS, formatMoney } from '../engine/game';
 import type { Action, ColorGroup, GameEvent, GameState } from '../engine/types';
 
@@ -47,21 +48,9 @@ function gridPos(id: number): { row: number; col: number; side: 'bottom' | 'left
   return { row: 1 + (id - 30), col: 11, side: 'right' };
 }
 
-const CELL_ICONS: Partial<Record<string, string>> = {
-  start: '➡️',
-  chance: '❓',
-  surprise: '🎁',
-  tax: '💸',
-  station: '🚆',
-  jail: '🔒',
-  parking: '🌳',
-  gotojail: '👮',
-};
-
-function cellIcon(id: number): string {
-  const c = BOARD[id];
-  if (c.type === 'utility') return id === 12 ? '💡' : '🚰';
-  return CELL_ICONS[c.type] ?? '';
+/** Иконка клетки (SVG из icons.ts). */
+function cellIcon(id: number, cls = 'ico'): string {
+  return iconSvg(id, cls);
 }
 
 function pips(n: number): string {
@@ -94,6 +83,7 @@ export class App {
 
   constructor(root: HTMLElement) {
     this.root = root;
+    installIcons();
     this.setup = this.loadSetup();
     root.addEventListener('click', (e) => this.onClick(e));
     root.addEventListener('input', (e) => {
@@ -551,8 +541,8 @@ export class App {
         style="grid-row:${row};grid-column:${col};${owner ? `--oc:${owner.color}` : ''}">
       ${c.group ? `<div class="strip" style="background:${GROUP_COLORS[c.group]}">${houses}</div>` : ''}
       <div class="cbody">
-        ${cellIcon(id) ? `<div class="cicon">${cellIcon(id)}</div>` : ''}
-        <div class="cname">${esc(label)}</div>
+        <div class="cicon">${cellIcon(id)}</div>
+        ${side === 'corner' ? `<div class="cname">${esc(label)}</div>` : ''}
         ${c.price ? `<div class="cprice">${(c.price / 1000).toLocaleString('ru-RU')}K</div>` : ''}
       </div>
       ${owner ? '<div class="owner-mark"></div>' : ''}
@@ -678,7 +668,7 @@ export class App {
             const own = s.cells[id];
             return `<button class="asset" data-cell="${id}">
               <span class="sw" style="background:${c.group ? GROUP_COLORS[c.group] : '#777'}"></span>
-              <span class="an">${cellIcon(id)} ${esc(c.name)}</span>
+              <span class="an">${cellIcon(id, 'ico inline')} ${esc(c.name)}</span>
               <span class="ah">${own.mortgaged ? 'залог' : own.houses === 5 ? '🏨' : '🏠'.repeat(own.houses)}</span>
             </button>`;
           })
@@ -725,7 +715,7 @@ export class App {
               const built = c.group ? groupCellsBuilt(game, c.group) : false;
               return `<button class="tcell ${chosen.includes(id) ? 'sel' : ''}" data-tcell="${id}" ${built ? 'disabled' : ''}>
                 <span class="sw" style="background:${c.group ? GROUP_COLORS[c.group] : '#8892a6'}"></span>
-                <span class="an">${cellIcon(id)} ${esc(c.short ?? c.name)}${s.cells[id].mortgaged ? ' <i>(залог)</i>' : ''}</span>
+                <span class="an">${cellIcon(id, 'ico inline')} ${esc(c.short ?? c.name)}${s.cells[id].mortgaged ? ' <i>(залог)</i>' : ''}</span>
                 <span class="chk">${chosen.includes(id) ? '✔' : ''}</span>
               </button>`;
             })
