@@ -421,7 +421,7 @@ button {
 .token {
   font-size: calc(var(--bw) * 0.05);
   line-height: 0;
-  filter: drop-shadow(0 0 1.5px #fff) drop-shadow(0 2px 1px rgba(0, 0, 0, 0.35));
+  filter: drop-shadow(0 1.5px 1.5px rgba(0, 0, 0, 0.55));
   animation: hop 0.14s ease-out;
 }
 .tk {
