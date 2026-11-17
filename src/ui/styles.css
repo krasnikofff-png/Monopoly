@@ -400,6 +400,14 @@ button {
 .cell.bottom {
   flex-direction: column;
 }
+.cell.top,
+.cell.bottom {
+  font-size: calc(var(--bw) * 0.0188);
+}
+.cname,
+.cprice {
+  letter-spacing: -0.02em;
+}
 .cell.top {
   flex-direction: column-reverse;
 }
@@ -478,8 +486,8 @@ button {
   flex: none;
 }
 .cname {
-  font-family: 'Roboto Condensed', 'Rubik', sans-serif;
-  font-weight: 700;
+  font-family: 'Nunito', 'Rubik', sans-serif;
+  font-weight: 800;
   hyphens: manual;
   -webkit-hyphens: manual;
   overflow-wrap: normal;
@@ -487,8 +495,8 @@ button {
   max-width: 100%;
 }
 .cprice {
-  font-family: 'Roboto Condensed', 'Rubik', sans-serif;
-  font-weight: 500;
+  font-family: 'Nunito', 'Rubik', sans-serif;
+  font-weight: 700;
   color: var(--muted);
   white-space: nowrap;
 }
@@ -672,6 +680,9 @@ button {
   gap: 0.6em;
   font-weight: 700;
   font-size: calc(var(--bw) * 0.032);
+}
+.dice-sum.empty {
+  visibility: hidden;
 }
 .dice-sum::before,
 .dice-sum::after {

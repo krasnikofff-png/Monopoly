@@ -137,7 +137,7 @@ const CELL_LABELS: Record<number, string> = {
   1: 'Капотня',
   3: `Бирю${S}лёво`,
   6: 'Выхино',
-  8: 'Марьино',
+  8: `Марь${S}ино`,
   9: 'Митино',
   10: 'Тюрьма',
   11: `Соколь${S}ники`,
@@ -625,7 +625,7 @@ export class App {
               <div class="dice ${this.rolling ? 'rolling' : ''}">
                 <div class="die">${pips(this.diceShown[0])}</div><div class="die">${pips(this.diceShown[1])}</div>
               </div>
-              <div class="dice-sum">${sum && !this.rolling ? `Выпало ${sum}${s.dice![0] === s.dice![1] ? ' · дубль!' : ''}` : '&nbsp;'}</div>
+              <div class="dice-sum ${sum && !this.rolling ? '' : 'empty'}">${sum && !this.rolling ? `Выпало ${sum}${s.dice![0] === s.dice![1] ? ' · дубль!' : ''}` : '&nbsp;'}</div>
             </div>
           </div>
         </div></div>
