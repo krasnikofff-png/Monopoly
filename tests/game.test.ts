@@ -3,6 +3,7 @@ import { BOARD, START_BONUS, START_MONEY } from '../src/data/board';
 import { botDecide } from '../src/engine/bot';
 import { Game } from '../src/engine/game';
 import { restoredDavidYana } from '../src/ui/restore';
+import { exportCode, importCode } from '../src/ui/store';
 
 function twoPlayers(seed = 1) {
   return Game.create(
@@ -192,6 +193,16 @@ describe('Игровой движок', () => {
     g.dispatch(0, { type: 'buy' });
     expect(g.state.cells[3].owner).toBe(0);
     expect(g.can(1, { type: 'mortgage', cell: 1 })).toBe(false);
+  });
+
+  it('код партии переносит состояние без потерь', () => {
+    const st = restoredDavidYana();
+    const back = importCode(exportCode(st))!;
+    expect(back).not.toBeNull();
+    expect(back.players.map((p) => [p.name, p.money, p.position])).toEqual(st.players.map((p) => [p.name, p.money, p.position]));
+    expect(back.cells).toEqual(st.cells);
+    expect(importCode('мусор')).toBeNull();
+    expect(importCode('MM1.@@@')).toBeNull();
   });
 
   it('боты доигрывают партию до конца без ошибок', () => {

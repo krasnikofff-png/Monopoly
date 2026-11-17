@@ -4,21 +4,15 @@ import { botDecide, tradeGain } from '../engine/bot';
 import { iconSvg, installIcons } from './icons';
 import { normalizeToken, tokenSvg } from './tokens';
 import { Sound, type SoundName } from './sound';
-import { CloudSave, HISTORY_SLOTS } from './cloud';
+import { GameStore, TURN_SLOTS, exportCode, importCode, newGameId, type GameMeta, type TurnSnap } from './store';
 import { confetti, floatText, flyCoins, shake, tweenNumber } from './fx';
 import { Game, GameError, PLAYER_COLORS, PLAYER_TOKENS, formatMoney } from '../engine/game';
 import type { Action, ColorGroup, GameEvent, GameState } from '../engine/types';
 
 type Notice = Extract<GameEvent, { kind: 'notice' }>;
 
-const SAVE_KEY = 'moskva-magnat-save-v1';
 const SETUP_KEY = 'moskva-magnat-setup-v1';
-const HISTORY_KEY = 'moskva-magnat-history-v1';
 
-interface HistEntry {
-  state: GameState;
-  savedAt: string;
-}
 
 interface SetupRow {
   name: string;
@@ -220,13 +214,14 @@ export class App {
   /** Последний человек, державший телефон (для экрана передачи хода). */
   private holder: number | null = null;
   private sound = new Sound();
-  private cloud = new CloudSave();
-  /** Сохранение из облака (подгружается асинхронно при запуске). */
-  private cloudState: GameState | null = null;
-  private cloudChecked = false;
-  private lastHistTurn = -1;
+  private store = new GameStore();
+  /** Идентификатор текущей партии в хранилище. */
+  private gameId: string | null = null;
+  /** Сохранённые партии для меню (null — ещё загружаются). */
+  private games: GameMeta[] | null = null;
   /** Снимки ходов для отката (null — ещё загружаются). */
-  private histEntries: HistEntry[] | null = null;
+  private histEntries: TurnSnap[] | null = null;
+  private lastStatusKind = '';
   /** Режим ручной правки владельцев клеток. */
   private editOwners = false;
   private prefs = { sound: true, vibrate: true };
@@ -243,7 +238,7 @@ export class App {
   private noticeResolve: (() => void) | null = null;
   private prevNoticeId = -1;
 
-  constructor(root: HTMLElement, resume?: GameState | null) {
+  constructor(root: HTMLElement, resume?: { state?: GameState; gameId?: string } | null) {
     this.root = root;
     installIcons();
     this.setup = this.loadSetup();
@@ -258,19 +253,53 @@ export class App {
       const t = e.target as HTMLInputElement;
       if (t.dataset.name !== undefined) this.setup[Number(t.dataset.name)].name = t.value;
     });
-    const hot = resume ? parseSave(JSON.stringify(resume)) : null;
-    if (hot) this.startGame(new Game(hot));
-    else this.renderMenu();
-    void this.cloud.load().then((payload) => {
-      this.cloudState = payload ? parseSave(payload.json) : null;
-      this.cloudChecked = true;
-      if (!this.game) this.renderMenu();
-    });
+    this.store.onStatus = () => this.onSaveStatus();
+    const hot = resume?.state ? parseSave(JSON.stringify(resume.state)) : null;
+    if (hot) {
+      this.startGame(new Game(hot), resume?.gameId ?? newGameId());
+      this.save();
+    } else {
+      this.renderMenu();
+    }
+    void this.refreshGames();
   }
 
   /** Текущая партия — для передачи в новую версию страницы при обновлении. */
-  snapshot(): GameState | null {
-    return this.game && this.game.state.phase !== 'gameover' ? this.game.state : null;
+  snapshot(): { state?: GameState; gameId?: string } {
+    if (!this.game || this.game.state.phase === 'gameover' || !this.gameId) return {};
+    return { state: this.game.state, gameId: this.gameId };
+  }
+
+  private async refreshGames(): Promise<void> {
+    this.games = await this.store.listGames();
+    if (!this.game) this.renderMenu();
+  }
+
+  private onSaveStatus(): void {
+    const st = this.store.status;
+    if (st.kind === 'error' && this.lastStatusKind !== 'error' && this.game) {
+      this.showToast('⚠ Не удалось сохранить в облако — пробую снова');
+    }
+    if (st.kind === 'cloud' && this.lastStatusKind === 'error' && this.game) {
+      this.showToast('☁ Сохранение снова работает');
+    }
+    this.lastStatusKind = st.kind;
+    if (this.modal === 'settings') this.render();
+  }
+
+  private statusText(): string {
+    const st = this.store.status;
+    const t = (iso: string) => (iso ? new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '');
+    switch (st.kind) {
+      case 'pending':
+        return 'Проверяем облачное сохранение…';
+      case 'cloud':
+        return `☁ Сохранено в облаке${t(st.at) ? `, ${t(st.at)}` : ''}`;
+      case 'local':
+        return '⚠ Облако недоступно — партия сохраняется только на этом устройстве. Скопируйте код партии на всякий случай.';
+      case 'error':
+        return `⚠ Последнее сохранение не дошло до облака${t(st.at) ? ` (${t(st.at)})` : ''}. Повторяю автоматически.`;
+    }
   }
 
   // ——————————————————— Меню ———————————————————
@@ -292,12 +321,12 @@ export class App {
   }
 
   private renderMenu(): void {
-    const hasSave = !!this.loadSave();
     const rows = this.setup;
     const humans = rows.filter((r) => !r.isBot).length;
     this.root.innerHTML = `
       <div class="menu">
         <div class="logo"><span>МОСКВА</span><b>МАГНАТ</b></div>
+        ${this.gamesHtml()}
         <div class="menu-card">
           <div class="menu-title">Игроки</div>
           <div class="setup-list">
@@ -317,13 +346,10 @@ export class App {
             humans > 1 ? `Людей: ${humans} — ходите по очереди, передавая телефон.` : humans === 0 ? 'Нужен хотя бы один человек.' : ''
           }</div>
           <button class="btn big green" data-act="new" ${humans === 0 ? 'disabled' : ''}>Новая игра</button>
-          ${
-            hasSave
-              ? `<button class="btn big blue" data-act="continue">Продолжить</button>`
-              : this.cloudChecked
-                ? ''
-                : `<div class="hint wait">Загружаем сохранение…</div>`
-          }
+          <button class="btn ghost" data-act="importCode">Загрузить партию по коду</button>
+        </div>
+        ${this.menuModalHtml()}
+        <div class="menu-card" hidden>
         </div>
       </div>`;
   }
@@ -343,12 +369,17 @@ export class App {
     this.saveSetup();
     this.startGame(
       Game.create(rows.map((r, i) => ({ name: r.name, isBot: r.isBot, color: PLAYER_COLORS[i], token: PLAYER_TOKENS[i] }))),
+      newGameId(),
     );
+    this.save();
   }
 
-  private startGame(game: Game): void {
+  private startGame(game: Game, id: string): void {
     for (const p of game.state.players) p.token = normalizeToken(p.token);
     this.game = game;
+    this.gameId = id;
+    this.holder = null;
+    this.histEntries = null;
     this.shownPos = game.state.players.map((p) => p.position);
     this.shownMoney = game.state.players.map((p) => p.money);
     this.prevCurrent = game.state.current;
@@ -358,43 +389,74 @@ export class App {
     this.scheduleBot();
   }
 
-  /** Самое свежее сохранение: из памяти браузера или из облака. */
-  private loadSave(): GameState | null {
-    let local: GameState | null = null;
-    try {
-      const raw = localStorage.getItem(SAVE_KEY);
-      if (raw) local = parseSave(raw);
-    } catch {
-      /* память браузера недоступна */
-    }
-    const cloud = this.cloudState;
-    if (!local) return cloud;
-    if (!cloud) return local;
-    const score = (g: GameState) => g.turnNumber * 1000 + g.log.length;
-    return score(cloud) >= score(local) ? cloud : local;
+  /** Сохраняет текущую партию (браузер — сразу, облако — пакетом). */
+  private save(): void {
+    if (!this.game || !this.gameId) return;
+    this.store.save(this.gameId, this.game.state);
   }
 
-  private save(): void {
-    if (!this.game) return;
-    const json = JSON.stringify(this.game.state);
-    this.cloud.save(json);
-    const turn = this.game.state.turnNumber;
-    if (turn !== this.lastHistTurn) {
-      this.lastHistTurn = turn;
-      this.cloud.saveTurn(turn, json);
-      try {
-        const list = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]') as { json: string; savedAt: string }[];
-        list.push({ json, savedAt: new Date().toISOString() });
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(-HISTORY_SLOTS)));
-      } catch {
-        /* память браузера недоступна — история только в облаке */
-      }
-    }
-    try {
-      localStorage.setItem(SAVE_KEY, json);
-    } catch {
-      /* хранилище недоступно — играем без сохранения */
-    }
+  private importHtml(): string {
+    return `<h3>Загрузить партию по коду</h3>
+      <div class="hint">Вставьте код партии целиком (он начинается с «MM1.»).</div>
+      <textarea id="codeIn" class="codebox" placeholder="MM1.…"></textarea>
+      <div id="codeErr" class="codeerr"></div>
+      <button class="btn green" data-act="importYes">Загрузить</button>
+      <button class="btn ghost" data-act="close">Отмена</button>`;
+  }
+
+  /** Окна поверх главного меню. */
+  private menuModalHtml(): string {
+    if (!this.modal) return '';
+    let body = '';
+    if (this.modal === 'import') body = this.importHtml();
+    else if (this.modal.startsWith('hide:')) {
+      const gid = this.modal.slice(5);
+      body = `<h3>Убрать партию из списка?</h3>
+        <div class="msg">Её нельзя будет продолжить.</div>
+        <button class="btn red" data-act="hideYes" data-gid="${esc(gid)}">Убрать</button>
+        <button class="btn ghost" data-act="close">Отмена</button>`;
+    } else return '';
+    return `<div class="overlay enter"><div class="modal">${body}</div></div>`;
+  }
+
+  private showMenuToast(msg: string): void {
+    if (this.game) return this.showToast(msg);
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = msg;
+    this.root.appendChild(el);
+    window.setTimeout(() => el.remove(), 2200);
+  }
+
+  /** Список сохранённых партий в главном меню. */
+  private gamesHtml(): string {
+    const list = this.games;
+    if (list === null) return `<div class="menu-card"><div class="hint wait">Ищем сохранённые партии…</div></div>`;
+    if (!list.length) return '';
+    const t = (iso: string) => {
+      if (!iso || iso.startsWith('1970')) return '';
+      const d = new Date(iso);
+      const today = new Date().toDateString() === d.toDateString();
+      return today
+        ? `сегодня в ${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`
+        : d.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    };
+    return `<div class="menu-card">
+      <div class="menu-title">Ваши партии</div>
+      ${list
+        .map(
+          (g) => `<div class="gitem">
+            <button class="gmain" data-act="continue" data-gid="${esc(g.id)}">
+              <span class="gplayers">${g.players
+                .map((p) => `<span class="gp ${p.bankrupt ? 'out' : ''}" style="--pc:${esc(p.color)}">${tokenSvg(p.token, p.color)}${esc(p.name)} <i>${p.money.toLocaleString('ru-RU')}</i></span>`)
+                .join('')}</span>
+              <span class="gmeta">Ход ${g.turn}${t(g.savedAt) ? ` · ${t(g.savedAt)}` : ''} · ${g.where === 'local' ? '📱 на этом устройстве' : '☁ в облаке'}</span>
+            </button>
+            <button class="gdel" data-act="hideGame" data-gid="${esc(g.id)}" aria-label="Убрать партию">✕</button>
+          </div>`,
+        )
+        .join('')}
+    </div>`;
   }
 
   // ——————————————————— Действия ———————————————————
@@ -688,7 +750,8 @@ export class App {
     this.modal = null;
     const r = this.modalResolve;
     this.modalResolve = null;
-    this.render();
+    if (this.game) this.render();
+    else this.renderMenu();
     r?.();
   }
 
@@ -811,21 +874,77 @@ export class App {
         return;
       }
       case 'continue': {
-        const s = this.loadSave();
-        if (s) this.startGame(new Game(s));
+        const gid = t.dataset.gid!;
+        void this.store.load(gid).then((st) => {
+          if (st) this.startGame(new Game(st), gid);
+          else this.showMenuToast('Не удалось открыть партию. Попробуйте ещё раз.');
+        });
+        return;
+      }
+      case 'hideGame':
+        this.modal = `hide:${t.dataset.gid}`;
+        return this.renderMenu();
+      case 'hideYes': {
+        const gid = t.dataset.gid!;
+        this.modal = null;
+        void this.store.load(gid).then((st) => {
+          this.store.hide(gid, st);
+          this.games = (this.games ?? []).filter((g) => g.id !== gid);
+          this.renderMenu();
+        });
+        return;
+      }
+      case 'importCode':
+        this.modal = 'import';
+        return this.game ? this.render() : this.renderMenu();
+      case 'importYes': {
+        const area = this.root.querySelector<HTMLTextAreaElement>('#codeIn');
+        const st = area ? importCode(area.value) : null;
+        if (!st) {
+          const err = this.root.querySelector('#codeErr');
+          if (err) err.textContent = 'Код не подошёл. Скопируйте его целиком, начиная с «MM1.»';
+          return;
+        }
+        this.modal = null;
+        this.startGame(new Game(st), newGameId());
+        this.save();
+        this.showToast('Партия загружена из кода');
+        return;
+      }
+      case 'copyCode': {
+        if (!this.game) return;
+        const code = exportCode(this.game.state);
+        const box = this.root.querySelector<HTMLTextAreaElement>('#codeOut');
+        if (box) box.value = code;
+        navigator.clipboard?.writeText(code).then(
+          () => this.showToast('Код партии скопирован'),
+          () => {
+            box?.focus();
+            box?.select();
+            this.showToast('Выделите код и скопируйте вручную');
+          },
+        );
         return;
       }
       case 'menu':
         if (this.botTimer !== null) clearTimeout(this.botTimer);
         this.botTimer = null;
+        this.save();
+        this.store.flush();
         this.game = null;
+        this.gameId = null;
         this.modal = null;
-        return this.renderMenu();
+        this.renderMenu();
+        void this.refreshGames();
+        return;
       case 'close':
         this.draft = null;
         return this.closeModal();
       case 'settings':
         this.modal = 'settings';
+        return this.render();
+      case 'showCode':
+        this.modal = 'code';
         return this.render();
       case 'toggleEdit':
         this.editOwners = !this.editOwners;
@@ -841,7 +960,8 @@ export class App {
         const e = this.histEntries?.[cell];
         if (!e) return;
         this.modal = null;
-        this.startGame(new Game(structuredClone(e.state)));
+        const keep = this.gameId ?? newGameId();
+        this.startGame(new Game(structuredClone(e.state)), keep);
         this.save();
         this.showToast(`Партия возвращена к ходу ${e.state.turnNumber}`);
         return;
@@ -1264,12 +1384,22 @@ export class App {
     } else if (this.modal === 'settings') {
       const tg = (on: boolean) => `<span class="toggle ${on ? 'on' : ''}"><i></i></span>`;
       body = `<h3>Настройки</h3>
+        <div class="savestat ${this.store.status.kind}">${esc(this.statusText())}</div>
         <button class="setting" data-act="toggleSound"><span>Звук</span>${tg(this.prefs.sound)}</button>
         <button class="setting" data-act="toggleVibro"><span>Вибрация</span>${tg(this.prefs.vibrate)}</button>
         <button class="setting" data-act="toggleEdit"><span>Исправить владельцев<small>в карточке клетки появится выбор владельца</small></span>${tg(this.editOwners)}</button>
         <button class="btn blue" data-act="history">Вернуть партию назад</button>
+        <button class="btn blue" data-act="showCode">Код партии (резервная копия)</button>
         <button class="btn red" data-act="menu">Выйти в главное меню</button>
         <button class="btn ghost" data-act="close">Закрыть</button>`;
+    } else if (this.modal === 'code') {
+      body = `<h3>Код партии</h3>
+        <div class="hint">Сохраните этот код в «Заметках» или пришлите мне. Партию можно будет загрузить из главного меню: «Загрузить партию по коду».</div>
+        <textarea id="codeOut" class="codebox" readonly>${this.game ? exportCode(this.game.state) : ''}</textarea>
+        <button class="btn green" data-act="copyCode">Скопировать код</button>
+        <button class="btn ghost" data-act="close">Закрыть</button>`;
+    } else if (this.modal === 'import') {
+      body = this.importHtml();
     } else if (this.modal === 'history') {
       body = this.historyHtml();
     } else if (this.modal.startsWith('rollback:')) {
@@ -1460,31 +1590,11 @@ export class App {
   private async loadHistory(): Promise<void> {
     this.histEntries = null;
     this.render();
-    const all: HistEntry[] = [];
-    try {
-      const local = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]') as { json: string; savedAt: string }[];
-      for (const h of local) {
-        const st = parseSave(h.json);
-        if (st) all.push({ state: st, savedAt: h.savedAt });
-      }
-    } catch {
-      /* нет локальной истории */
-    }
-    for (const h of await this.cloud.loadHistory()) {
-      const st = parseSave(h.json);
-      if (st) all.push({ state: st, savedAt: h.savedAt });
-    }
-    // По одному снимку на ход — самому свежему; новые сверху.
-    const byTurn = new Map<number, HistEntry>();
-    for (const e of all) {
-      const prev = byTurn.get(e.state.turnNumber);
-      if (!prev || prev.savedAt < e.savedAt) byTurn.set(e.state.turnNumber, e);
-    }
-    this.histEntries = [...byTurn.values()].sort((a, b) => b.state.turnNumber - a.state.turnNumber).slice(0, HISTORY_SLOTS);
+    this.histEntries = this.gameId ? (await this.store.listTurns(this.gameId)).slice(0, TURN_SLOTS) : [];
     if (this.modal === 'history') this.render();
   }
 
-  private histSummary(e: HistEntry): string {
+  private histSummary(e: TurnSnap): string {
     const t = e.savedAt ? new Date(e.savedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
     const money = e.state.players
       .filter((p) => !p.bankrupt)
@@ -1507,7 +1617,7 @@ export class App {
               .join('')
           : '<div class="hint">Пока нет сохранённых ходов. Они появятся по ходу игры.</div>';
     return `<h3>Вернуть партию назад</h3>
-      <div class="hint">Игра помнит начало ${HISTORY_SLOTS} последних ходов.</div>
+      <div class="hint">Игра помнит начало ${TURN_SLOTS} последних ходов этой партии.</div>
       <div class="hlist">${items}</div>
       <button class="btn ghost" data-act="close">Закрыть</button>`;
   }
