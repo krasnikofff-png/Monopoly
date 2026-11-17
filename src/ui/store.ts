@@ -18,7 +18,6 @@ type Snap = { id: string; exists: boolean; data(): Record<string, unknown> | und
 type DocRef = { get(): Promise<Snap>; set(d: Record<string, unknown>): Promise<void> };
 type ColRef = { get(): Promise<{ docs: Snap[] }> };
 type Db = { doc(path: string): DocRef; collection(path: string): ColRef };
-type User = { id(): Promise<string | null> };
 type ClaudeGlobal = { use?: (name: string) => Promise<unknown> };
 
 export interface PlayerMeta {
@@ -121,7 +120,6 @@ export class GameStore {
   onStatus: (() => void) | null = null;
 
   private db: Promise<Db | null>;
-  private user: Promise<User | null>;
   private queue = new Map<string, Record<string, unknown>>();
   private lastTurn = new Map<string, number>();
   private timer: number | null = null;
@@ -132,7 +130,6 @@ export class GameStore {
     const use = (name: string) =>
       c?.use ? withTimeout(c.use(name), 12000).catch(() => null) : Promise.resolve(null);
     this.db = use('db') as Promise<Db | null>;
-    this.user = use('user') as Promise<User | null>;
     void this.db.then((db) => {
       if (!db && this.status.kind === 'pending') this.setStatus({ kind: 'local', at: '' });
     });
@@ -330,30 +327,13 @@ export class GameStore {
     }
   }
 
-  /** Переносит сохранение старого формата (одна партия) в список партий. */
+  /** Переносит сохранение старого формата (одна партия в памяти браузера) в список партий.
+   *  Старое облачное сохранение писалось по неверному адресу и никогда не сохранялось. */
   private async importLegacy(byId: Map<string, GameMeta>): Promise<void> {
     if (byId.has('legacy')) return;
     let best: { json: string; savedAt: string } | null = null;
     const local = lsGet(LEGACY_LOCAL_KEY);
     if (local && parseState(local)) best = { json: local, savedAt: '' };
-    const [db, user] = await Promise.all([this.db, this.user]);
-    if (db && user) {
-      try {
-        const uid = await withTimeout(user.id(), 8000);
-        if (uid) {
-          const snap = await withTimeout(db.doc(`data/users/${uid}/saves/current`).get(), 10000);
-          const d = snap.exists ? snap.data() : undefined;
-          if (d && typeof d.json === 'string' && parseState(d.json)) {
-            const cand = { json: d.json, savedAt: String(d.savedAt ?? '') };
-            const a = parseState(cand.json)!;
-            const b = best ? parseState(best.json)! : null;
-            if (!b || a.turnNumber >= b.turnNumber) best = cand;
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-    }
     if (!best) return;
     const state = parseState(best.json)!;
     if (state.phase === 'gameover') return;
