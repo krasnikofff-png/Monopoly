@@ -1627,3 +1627,14 @@ button {
   color: var(--muted);
   font-weight: 600;
 }
+
+.mhints {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--indigo-l);
+  border-radius: 12px;
+  padding: 8px 10px;
+}

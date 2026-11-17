@@ -1164,7 +1164,7 @@ export class App {
         return this.bar(
           p,
           title,
-          enough ? 'Участок свободен — можно купить.' : 'Не хватает денег. Участок уйдёт на аукцион.',
+          enough ? 'Участок свободен — можно купить.' : 'Не хватает денег — заложите улицы в «Имуществе» или пропустите (будет аукцион).',
           `<button class="btn green" data-act="buy" ${enough ? '' : 'disabled'}>Купить за ${formatMoney(cell.price!)}</button>
            <button class="btn yellow" data-act="decline">Пропустить</button>`,
         );
@@ -1396,6 +1396,44 @@ export class App {
       </div>`;
   }
 
+  /** Почему с улицей сейчас нельзя что-то сделать — подсказки под кнопками. */
+  private manageHints(id: number): string[] {
+    const game = this.game!;
+    const s = game.state;
+    const me = this.me();
+    const c = BOARD[id];
+    const own = s.cells[id];
+    const p = game.player(me);
+    const can = (type: string) => game.can(me, { type, cell: id } as Action);
+    const myTurn = game.actor() === me && ['roll', 'end', 'buy', 'auction', 'debt'].includes(s.phase);
+    if (!myTurn) {
+      return [`Сейчас ход другого игрока. Управлять имуществом можно в свой ход.`];
+    }
+    const hints: string[] = [];
+    if (s.phase === 'debt') hints.push('Пока есть долг, можно только продавать дома и закладывать.');
+    if (c.type === 'property' && s.phase !== 'debt') {
+      const ids = groupCells(c.group!);
+      const have = ids.filter((g) => s.cells[g].owner === me).length;
+      const acc = GROUP_NAMES[c.group!].replace(/ая$/, 'ую').replace(/яя$/, 'юю');
+      if (have < ids.length) {
+        hints.push(`Чтобы строить, соберите всю ${acc} группу: у вас ${have} из ${ids.length}.`);
+      } else if (ids.some((g) => s.cells[g].mortgaged)) {
+        hints.push('Чтобы строить, выкупите заложенные улицы этой группы.');
+      } else if (own.houses < 5 && !can('build')) {
+        const min = Math.min(...ids.map((g) => s.cells[g].houses));
+        if (own.houses > min) hints.push('Стройте равномерно: сначала поставьте дом на другие улицы группы.');
+        else if (p.money < c.houseCost!) hints.push(`На дом нужно ${formatMoney(c.houseCost!)}, у вас ${formatMoney(p.money)}.`);
+      }
+    }
+    if (c.group && !own.mortgaged && !can('mortgage') && groupCells(c.group).some((g) => s.cells[g].houses > 0)) {
+      hints.push('Чтобы заложить, сначала продайте все дома в группе.');
+    }
+    if (own.mortgaged && s.phase !== 'debt' && !can('unmortgage')) {
+      hints.push(`На выкуп из залога нужно ${formatMoney(Game.unmortgageCost(c))}, у вас ${formatMoney(p.money)}.`);
+    }
+    return hints;
+  }
+
   private cellCard(id: number): string {
     const game = this.game!;
     const c = BOARD[id];
@@ -1430,10 +1468,11 @@ export class App {
         ? [
             btn('build', own.houses === 4 ? '🏨 Отель' : '🏠 Дом', 'green'),
             btn('sellHouse', 'Продать дом', 'yellow'),
-            btn('mortgage', 'Заложить', 'red'),
+            btn('mortgage', `Заложить +${formatMoney(c.price! / 2)}`, 'red'),
             btn('unmortgage', `Выкупить ${formatMoney(Game.unmortgageCost(c))}`, 'blue'),
           ].join('')
         : '';
+    const hints = own.owner === me ? this.manageHints(id) : [];
     return `<div class="deed">
         <div class="deed-head" style="background:${c.group ? GROUP_COLORS[c.group] : '#3b4b66'}">
           <div class="deed-icon">${cellIcon(id)}</div>
@@ -1446,6 +1485,7 @@ export class App {
         }</div>
       </div>
       <div class="row wrap">${actions}</div>
+      ${hints.length ? `<div class="mhints">${hints.map((h) => `<div>${esc(h)}</div>`).join('')}</div>` : ''}
       <button class="btn ghost" data-act="close">Закрыть</button>`;
   }
 }

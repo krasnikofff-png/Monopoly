@@ -179,6 +179,21 @@ describe('Игровой движок', () => {
     expect(g.state.phase).toBe('gameover');
   });
 
+  it('можно заложить улицу, решая, покупать ли клетку', () => {
+    const g = twoPlayers();
+    g.state.cells[1].owner = 0;
+    g.state.players[0].money = 500;
+    forceDice(g, 1, 2); // Бирюлёво за 700
+    g.dispatch(0, { type: 'roll' });
+    expect(g.state.phase).toBe('buy');
+    expect(g.can(0, { type: 'buy' })).toBe(false);
+    g.dispatch(0, { type: 'mortgage', cell: 1 });
+    expect(g.state.players[0].money).toBe(800);
+    g.dispatch(0, { type: 'buy' });
+    expect(g.state.cells[3].owner).toBe(0);
+    expect(g.can(1, { type: 'mortgage', cell: 1 })).toBe(false);
+  });
+
   it('боты доигрывают партию до конца без ошибок', () => {
     for (let seed = 1; seed <= 30; seed++) {
       const g = Game.create(

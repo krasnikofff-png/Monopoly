@@ -830,9 +830,13 @@ export class Game {
 
   private assertManage(playerId: number, allowDebt: boolean): void {
     const s = this.state;
-    const ok = s.phase === 'roll' || s.phase === 'end' || (allowDebt && s.phase === 'debt');
+    // Имуществом распоряжается тот, от кого сейчас ждут действия: в начале и конце хода,
+    // при решении о покупке (например, заложить улицу, чтобы хватило денег), на своей
+    // ставке в аукционе. При долге — только продавать и закладывать.
+    const ok =
+      s.phase === 'roll' || s.phase === 'end' || s.phase === 'buy' || s.phase === 'auction' || (allowDebt && s.phase === 'debt');
     if (!ok) throw new GameError('Сейчас нельзя управлять имуществом');
-    if (s.phase !== 'debt' && playerId !== s.current) throw new GameError('Не ваш ход');
+    if (playerId !== this.actor()) throw new GameError('Не ваш ход');
   }
 
   private streetOf(playerId: number, cellId: number): Cell {
