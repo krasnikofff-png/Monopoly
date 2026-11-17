@@ -4,8 +4,7 @@ import { botDecide, tradeGain } from '../engine/bot';
 import { iconSvg, installIcons } from './icons';
 import { normalizeToken, tokenSvg } from './tokens';
 import { Sound, type SoundName } from './sound';
-import { CloudSave } from './cloud';
-import { RESTORE_LABEL, restoredDavidYana } from './restore';
+import { CloudSave, HISTORY_SLOTS } from './cloud';
 import { confetti, floatText, flyCoins, shake, tweenNumber } from './fx';
 import { Game, GameError, PLAYER_COLORS, PLAYER_TOKENS, formatMoney } from '../engine/game';
 import type { Action, ColorGroup, GameEvent, GameState } from '../engine/types';
@@ -14,6 +13,12 @@ type Notice = Extract<GameEvent, { kind: 'notice' }>;
 
 const SAVE_KEY = 'moskva-magnat-save-v1';
 const SETUP_KEY = 'moskva-magnat-setup-v1';
+const HISTORY_KEY = 'moskva-magnat-history-v1';
+
+interface HistEntry {
+  state: GameState;
+  savedAt: string;
+}
 
 interface SetupRow {
   name: string;
@@ -218,6 +223,12 @@ export class App {
   private cloud = new CloudSave();
   /** Сохранение из облака (подгружается асинхронно при запуске). */
   private cloudState: GameState | null = null;
+  private cloudChecked = false;
+  private lastHistTurn = -1;
+  /** Снимки ходов для отката (null — ещё загружаются). */
+  private histEntries: HistEntry[] | null = null;
+  /** Режим ручной правки владельцев клеток. */
+  private editOwners = false;
   private prefs = { sound: true, vibrate: true };
   /** Отображаемые суммы денег (плавно догоняют настоящие). */
   private shownMoney: number[] = [];
@@ -252,6 +263,7 @@ export class App {
     else this.renderMenu();
     void this.cloud.load().then((payload) => {
       this.cloudState = payload ? parseSave(payload.json) : null;
+      this.cloudChecked = true;
       if (!this.game) this.renderMenu();
     });
   }
@@ -305,8 +317,13 @@ export class App {
             humans > 1 ? `Людей: ${humans} — ходите по очереди, передавая телефон.` : humans === 0 ? 'Нужен хотя бы один человек.' : ''
           }</div>
           <button class="btn big green" data-act="new" ${humans === 0 ? 'disabled' : ''}>Новая игра</button>
-          ${hasSave ? `<button class="btn big blue" data-act="continue">Продолжить</button>` : ''}
-          ${hasSave ? '' : `<button class="btn ghost" data-act="restore">Восстановить: ${RESTORE_LABEL}</button>`}
+          ${
+            hasSave
+              ? `<button class="btn big blue" data-act="continue">Продолжить</button>`
+              : this.cloudChecked
+                ? ''
+                : `<div class="hint wait">Загружаем сохранение…</div>`
+          }
         </div>
       </div>`;
   }
@@ -361,6 +378,18 @@ export class App {
     if (!this.game) return;
     const json = JSON.stringify(this.game.state);
     this.cloud.save(json);
+    const turn = this.game.state.turnNumber;
+    if (turn !== this.lastHistTurn) {
+      this.lastHistTurn = turn;
+      this.cloud.saveTurn(turn, json);
+      try {
+        const list = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]') as { json: string; savedAt: string }[];
+        list.push({ json, savedAt: new Date().toISOString() });
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(-HISTORY_SLOTS)));
+      } catch {
+        /* память браузера недоступна — история только в облаке */
+      }
+    }
     try {
       localStorage.setItem(SAVE_KEY, json);
     } catch {
@@ -781,12 +810,6 @@ export class App {
         void this.act(me, { type: 'proposeTrade', offer });
         return;
       }
-      case 'restore': {
-        const st = restoredDavidYana();
-        this.startGame(new Game(st));
-        this.save();
-        return;
-      }
       case 'continue': {
         const s = this.loadSave();
         if (s) this.startGame(new Game(s));
@@ -804,6 +827,31 @@ export class App {
       case 'settings':
         this.modal = 'settings';
         return this.render();
+      case 'toggleEdit':
+        this.editOwners = !this.editOwners;
+        return this.render();
+      case 'history':
+        this.modal = 'history';
+        if (!this.histEntries || this.modal === 'history') void this.loadHistory();
+        return this.render();
+      case 'rollback':
+        this.modal = `rollback:${cell}`;
+        return this.render();
+      case 'rollbackYes': {
+        const e = this.histEntries?.[cell];
+        if (!e) return;
+        this.modal = null;
+        this.startGame(new Game(structuredClone(e.state)));
+        this.save();
+        this.showToast(`Партия возвращена к ходу ${e.state.turnNumber}`);
+        return;
+      }
+      case 'setOwner': {
+        if (!game) return;
+        const ownerRaw = t.dataset.owner!;
+        this.setOwner(cell, ownerRaw === 'bank' ? null : Number(ownerRaw));
+        return;
+      }
       case 'dismissNotice':
         return this.dismissNotice();
       case 'toggleSound':
@@ -1218,8 +1266,21 @@ export class App {
       body = `<h3>Настройки</h3>
         <button class="setting" data-act="toggleSound"><span>Звук</span>${tg(this.prefs.sound)}</button>
         <button class="setting" data-act="toggleVibro"><span>Вибрация</span>${tg(this.prefs.vibrate)}</button>
+        <button class="setting" data-act="toggleEdit"><span>Исправить владельцев<small>в карточке клетки появится выбор владельца</small></span>${tg(this.editOwners)}</button>
+        <button class="btn blue" data-act="history">Вернуть партию назад</button>
         <button class="btn red" data-act="menu">Выйти в главное меню</button>
         <button class="btn ghost" data-act="close">Закрыть</button>`;
+    } else if (this.modal === 'history') {
+      body = this.historyHtml();
+    } else if (this.modal.startsWith('rollback:')) {
+      const e = this.histEntries?.[Number(this.modal.slice(9))];
+      body = e
+        ? `<h3>Вернуться к ходу ${e.state.turnNumber}?</h3>
+          <div class="msg">${this.histSummary(e)}</div>
+          <div class="msg">Всё, что было после, пропадёт.</div>
+          <button class="btn green" data-act="rollbackYes" data-id="${this.modal.slice(9)}">Вернуться</button>
+          <button class="btn ghost" data-act="history">Назад к списку</button>`
+        : '';
     } else if (this.modal === 'trade' && this.draft) {
       body = this.tradeHtml(this.draft);
     } else if (this.modal === 'assets') {
@@ -1396,6 +1457,87 @@ export class App {
       </div>`;
   }
 
+  private async loadHistory(): Promise<void> {
+    this.histEntries = null;
+    this.render();
+    const all: HistEntry[] = [];
+    try {
+      const local = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]') as { json: string; savedAt: string }[];
+      for (const h of local) {
+        const st = parseSave(h.json);
+        if (st) all.push({ state: st, savedAt: h.savedAt });
+      }
+    } catch {
+      /* нет локальной истории */
+    }
+    for (const h of await this.cloud.loadHistory()) {
+      const st = parseSave(h.json);
+      if (st) all.push({ state: st, savedAt: h.savedAt });
+    }
+    // По одному снимку на ход — самому свежему; новые сверху.
+    const byTurn = new Map<number, HistEntry>();
+    for (const e of all) {
+      const prev = byTurn.get(e.state.turnNumber);
+      if (!prev || prev.savedAt < e.savedAt) byTurn.set(e.state.turnNumber, e);
+    }
+    this.histEntries = [...byTurn.values()].sort((a, b) => b.state.turnNumber - a.state.turnNumber).slice(0, HISTORY_SLOTS);
+    if (this.modal === 'history') this.render();
+  }
+
+  private histSummary(e: HistEntry): string {
+    const t = e.savedAt ? new Date(e.savedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+    const money = e.state.players
+      .filter((p) => !p.bankrupt)
+      .map((p) => `${esc(p.name)} ${p.money.toLocaleString('ru-RU')} ₽`)
+      .join(' · ');
+    return `${t ? `${t} · ` : ''}ходит ${esc(e.state.players[e.state.current].name)}<br>${money}`;
+  }
+
+  private historyHtml(): string {
+    const list = this.histEntries;
+    const items =
+      list === null
+        ? '<div class="hint wait">Загружаем историю…</div>'
+        : list.length
+          ? list
+              .map(
+                (e, i) => `<button class="hitem" data-act="rollback" data-id="${i}">
+                  <b>Ход ${e.state.turnNumber}</b><span>${this.histSummary(e)}</span></button>`,
+              )
+              .join('')
+          : '<div class="hint">Пока нет сохранённых ходов. Они появятся по ходу игры.</div>';
+    return `<h3>Вернуть партию назад</h3>
+      <div class="hint">Игра помнит начало ${HISTORY_SLOTS} последних ходов.</div>
+      <div class="hlist">${items}</div>
+      <button class="btn ghost" data-act="close">Закрыть</button>`;
+  }
+
+  /** Ручная правка владельца (режим «Исправить владельцев»). */
+  private setOwner(id: number, owner: number | null): void {
+    const game = this.game!;
+    const s = game.state;
+    const c = BOARD[id];
+    s.cells[id].owner = owner;
+    if (owner === null) s.cells[id].mortgaged = false;
+    // Если группа перестала быть монополией — дома возвращаются банку.
+    if (c.group) {
+      const ids = groupCells(c.group);
+      const first = s.cells[ids[0]].owner;
+      const full = first !== null && ids.every((g) => s.cells[g].owner === first);
+      if (!full) {
+        for (const g of ids) {
+          const h = s.cells[g].houses;
+          if (h === 5) s.hotelsLeft++;
+          else s.housesLeft += h;
+          s.cells[g].houses = 0;
+        }
+      }
+    }
+    this.save();
+    this.render();
+    this.showToast(`Владелец «${c.name}»: ${owner === null ? 'банк' : game.player(owner).name}`);
+  }
+
   /** Почему с улицей сейчас нельзя что-то сделать — подсказки под кнопками. */
   private manageHints(id: number): string[] {
     const game = this.game!;
@@ -1473,6 +1615,16 @@ export class App {
           ].join('')
         : '';
     const hints = own.owner === me ? this.manageHints(id) : [];
+    const editor =
+      this.editOwners && isOwnable(c)
+        ? `<div class="oedit"><div class="hint">Владелец (ручная правка):</div><div class="row wrap">${game.state.players
+            .filter((p) => !p.bankrupt)
+            .map(
+              (p) =>
+                `<button class="btn ${own.owner === p.id ? 'green' : 'yellow'} sm" data-act="setOwner" data-id="${id}" data-owner="${p.id}">${esc(p.name)}</button>`,
+            )
+            .join('')}<button class="btn ${own.owner === null ? 'green' : 'yellow'} sm" data-act="setOwner" data-id="${id}" data-owner="bank">Банк</button></div></div>`
+        : '';
     return `<div class="deed">
         <div class="deed-head" style="background:${c.group ? GROUP_COLORS[c.group] : '#3b4b66'}">
           <div class="deed-icon">${cellIcon(id)}</div>
@@ -1486,6 +1638,7 @@ export class App {
       </div>
       <div class="row wrap">${actions}</div>
       ${hints.length ? `<div class="mhints">${hints.map((h) => `<div>${esc(h)}</div>`).join('')}</div>` : ''}
+      ${editor}
       <button class="btn ghost" data-act="close">Закрыть</button>`;
   }
 }

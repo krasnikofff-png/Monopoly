@@ -689,6 +689,7 @@ export class Game {
     if (s.phase !== 'buy') throw new GameError('Нечего покупать');
     const p = this.player(s.current);
     const cell = BOARD[p.position];
+    if (s.cells[cell.id].owner !== null) throw new GameError('Клетка уже куплена');
     if (p.money < cell.price!) throw new GameError('Недостаточно денег');
     this.addMoney(p.id, -cell.price!);
     s.cells[cell.id].owner = p.id;
