@@ -219,9 +219,13 @@ export class App {
   private gameId: string | null = null;
   /** Сохранённые партии для меню (null — ещё загружаются). */
   private games: GameMeta[] | null = null;
+  /** Облако ответило при загрузке списка партий. */
+  private gamesCloudOk = true;
   /** Снимки ходов для отката (null — ещё загружаются). */
   private histEntries: TurnSnap[] | null = null;
   private lastStatusKind = '';
+  /** Номер открытой партии в этом сеансе: анимации старой партии прекращаются. */
+  private gen = 0;
   /** Режим ручной правки владельцев клеток. */
   private editOwners = false;
   private prefs = { sound: true, vibrate: true };
@@ -238,7 +242,7 @@ export class App {
   private noticeResolve: (() => void) | null = null;
   private prevNoticeId = -1;
 
-  constructor(root: HTMLElement, resume?: { state?: GameState; gameId?: string } | null) {
+  constructor(root: HTMLElement, resume?: { state?: GameState; gameId?: string; rev?: number } | null) {
     this.root = root;
     installIcons();
     this.setup = this.loadSetup();
@@ -256,7 +260,9 @@ export class App {
     this.store.onStatus = () => this.onSaveStatus();
     const hot = resume?.state ? parseSave(JSON.stringify(resume.state)) : null;
     if (hot) {
-      this.startGame(new Game(hot), resume?.gameId ?? newGameId());
+      const id = resume?.gameId ?? newGameId();
+      this.store.opened(id, hot, resume?.rev ?? 0);
+      this.startGame(new Game(hot), id);
       this.save();
     } else {
       this.renderMenu();
@@ -265,20 +271,27 @@ export class App {
   }
 
   /** Текущая партия — для передачи в новую версию страницы при обновлении. */
-  snapshot(): { state?: GameState; gameId?: string } {
+  snapshot(): { state?: GameState; gameId?: string; rev?: number } {
+    this.store.flush();
     if (!this.game || this.game.state.phase === 'gameover' || !this.gameId) return {};
-    return { state: this.game.state, gameId: this.gameId };
+    return { state: this.game.state, gameId: this.gameId, rev: this.store.revOf(this.gameId) };
   }
 
   private async refreshGames(): Promise<void> {
-    this.games = await this.store.listGames();
+    const r = await this.store.listGames();
+    this.games = r.games;
+    this.gamesCloudOk = r.cloudOk;
     if (!this.game) this.renderMenu();
   }
 
   private onSaveStatus(): void {
     const st = this.store.status;
-    if (st.kind === 'error' && this.lastStatusKind !== 'error' && this.game) {
-      this.showToast('⚠ Не удалось сохранить в облако — пробую снова');
+    if (st.kind === 'error' && this.lastStatusKind !== 'error') {
+      this.showMenuToast(st.fatal ? '⚠ Облако отклонило сохранение. Сохраните код партии в меню ☰' : '⚠ Не удалось сохранить в облако — пробую снова');
+    }
+    if (st.kind === 'conflict' && this.lastStatusKind !== 'conflict') {
+      this.modal = 'conflict';
+      if (this.game) this.render();
     }
     if (st.kind === 'cloud' && this.lastStatusKind === 'error' && this.game) {
       this.showToast('☁ Сохранение снова работает');
@@ -298,7 +311,11 @@ export class App {
       case 'local':
         return '⚠ Облако недоступно — партия сохраняется только на этом устройстве. Скопируйте код партии на всякий случай.';
       case 'error':
-        return `⚠ Последнее сохранение не дошло до облака${t(st.at) ? ` (${t(st.at)})` : ''}. Повторяю автоматически.`;
+        return st.fatal
+          ? `⚠ Облако отклонило сохранение${st.code ? ` (${st.code})` : ''}. Партия сохраняется на этом телефоне — сохраните код партии.`
+          : `⚠ Последнее сохранение не дошло до облака${st.code ? ` (${st.code})` : ''}${t(st.at) ? `, ${t(st.at)}` : ''}. Повторяю автоматически.`;
+      case 'conflict':
+        return `⚠ В облаке более новая версия этой партии (ход ${st.turn}). Эта версия больше не сохраняется — выйдите в меню и откройте партию заново.`;
     }
   }
 
@@ -371,10 +388,21 @@ export class App {
       Game.create(rows.map((r, i) => ({ name: r.name, isBot: r.isBot, color: PLAYER_COLORS[i], token: PLAYER_TOKENS[i] }))),
       newGameId(),
     );
+    this.store.opened(this.gameId!, this.game!.state, 0);
     this.save();
   }
 
   private startGame(game: Game, id: string): void {
+    if (this.botTimer !== null) clearTimeout(this.botTimer);
+    this.botTimer = null;
+    // Прерываем анимации прошлой партии: отпускаем ожидающие окна, сбрасываем «ход идёт».
+    this.gen++;
+    this.busy = false;
+    const pending = [this.noticeResolve, this.modalResolve];
+    this.notice = null;
+    this.noticeResolve = null;
+    this.modalResolve = null;
+    pending.forEach((r) => r?.());
     for (const p of game.state.players) p.token = normalizeToken(p.token);
     this.game = game;
     this.gameId = id;
@@ -432,7 +460,11 @@ export class App {
   private gamesHtml(): string {
     const list = this.games;
     if (list === null) return `<div class="menu-card"><div class="hint wait">Ищем сохранённые партии…</div></div>`;
-    if (!list.length) return '';
+    const warn = this.gamesCloudOk
+      ? ''
+      : `<div class="savestat error">⚠ Облако не ответило — показаны только партии с этого телефона.</div>
+         <button class="btn ghost" data-act="refreshGames">Попробовать ещё раз</button>`;
+    if (!list.length) return warn ? `<div class="menu-card">${warn}</div>` : '';
     const t = (iso: string) => {
       if (!iso || iso.startsWith('1970')) return '';
       const d = new Date(iso);
@@ -443,6 +475,7 @@ export class App {
     };
     return `<div class="menu-card">
       <div class="menu-title">Ваши партии</div>
+      ${warn}
       ${list
         .map(
           (g) => `<div class="gitem">
@@ -501,7 +534,9 @@ export class App {
     }
     this.save();
     this.busy = true;
-    await this.play(game.drainEvents());
+    const gen = this.gen;
+    await this.play(game.drainEvents(), gen);
+    if (gen !== this.gen) return; // за это время открыли другую партию
     this.busy = false;
     this.render();
     this.scheduleBot();
@@ -564,9 +599,10 @@ export class App {
     });
   }
 
-  private async play(events: GameEvent[]): Promise<void> {
+  private async play(events: GameEvent[], gen: number): Promise<void> {
     const game = this.game!;
     for (let i = 0; i < events.length; i++) {
+      if (gen !== this.gen) return;
       const e = events[i];
       const next = events[i + 1];
       switch (e.kind) {
@@ -875,23 +911,29 @@ export class App {
       }
       case 'continue': {
         const gid = t.dataset.gid!;
-        void this.store.load(gid).then((st) => {
-          if (st) this.startGame(new Game(st), gid);
-          else this.showMenuToast('Не удалось открыть партию. Попробуйте ещё раз.');
+        this.showMenuToast('Открываем партию…');
+        void this.store.load(gid).then((r) => {
+          if (!r) return this.showMenuToast('Не удалось открыть партию. Проверьте интернет и попробуйте ещё раз.');
+          this.store.opened(gid, r.state, r.rev);
+          this.startGame(new Game(r.state), gid);
+          if (r.cloudUnchecked) this.showToast('⚠ Облако не ответило — открыта версия с этого телефона');
         });
         return;
       }
+      case 'refreshGames':
+        this.games = null;
+        this.renderMenu();
+        void this.refreshGames();
+        return;
       case 'hideGame':
         this.modal = `hide:${t.dataset.gid}`;
         return this.renderMenu();
       case 'hideYes': {
         const gid = t.dataset.gid!;
         this.modal = null;
-        void this.store.load(gid).then((st) => {
-          this.store.hide(gid, st);
-          this.games = (this.games ?? []).filter((g) => g.id !== gid);
-          this.renderMenu();
-        });
+        this.store.hide(gid);
+        this.games = (this.games ?? []).filter((g) => g.id !== gid);
+        this.renderMenu();
         return;
       }
       case 'importCode':
@@ -905,8 +947,11 @@ export class App {
           if (err) err.textContent = 'Код не подошёл. Скопируйте его целиком, начиная с «MM1.»';
           return;
         }
+        if (this.busy) return this.showToast('Подождите, пока закончится ход');
         this.modal = null;
-        this.startGame(new Game(st), newGameId());
+        const id = newGameId();
+        this.store.opened(id, st, 0);
+        this.startGame(new Game(st), id);
         this.save();
         this.showToast('Партия загружена из кода');
         return;
@@ -931,6 +976,15 @@ export class App {
         this.botTimer = null;
         this.save();
         this.store.flush();
+        this.gen++;
+        this.busy = false;
+        {
+          const pending = [this.noticeResolve, this.modalResolve];
+          this.noticeResolve = null;
+          this.modalResolve = null;
+          this.notice = null;
+          pending.forEach((r) => r?.());
+        }
         this.game = null;
         this.gameId = null;
         this.modal = null;
@@ -959,9 +1013,12 @@ export class App {
       case 'rollbackYes': {
         const e = this.histEntries?.[cell];
         if (!e) return;
+        if (this.busy) return this.showToast('Подождите, пока закончится ход');
         this.modal = null;
         const keep = this.gameId ?? newGameId();
-        this.startGame(new Game(structuredClone(e.state)), keep);
+        const st = structuredClone(e.state);
+        this.store.opened(keep, st, this.store.revOf(keep));
+        this.startGame(new Game(st), keep);
         this.save();
         this.showToast(`Партия возвращена к ходу ${e.state.turnNumber}`);
         return;
@@ -1392,6 +1449,10 @@ export class App {
         <button class="btn blue" data-act="showCode">Код партии (резервная копия)</button>
         <button class="btn red" data-act="menu">Выйти в главное меню</button>
         <button class="btn ghost" data-act="close">Закрыть</button>`;
+    } else if (this.modal === 'conflict') {
+      body = `<h3>Есть более новая версия</h3>
+        <div class="msg">${esc(this.statusText())}</div>
+        <button class="btn green" data-act="menu">Открыть меню партий</button>`;
     } else if (this.modal === 'code') {
       body = `<h3>Код партии</h3>
         <div class="hint">Сохраните этот код в «Заметках» или пришлите мне. Партию можно будет загрузить из главного меню: «Загрузить партию по коду».</div>
@@ -1590,7 +1651,8 @@ export class App {
   private async loadHistory(): Promise<void> {
     this.histEntries = null;
     this.render();
-    this.histEntries = this.gameId ? (await this.store.listTurns(this.gameId)).slice(0, TURN_SLOTS) : [];
+    this.histEntries =
+      this.gameId && this.game ? (await this.store.listTurns(this.gameId, this.game.state.turnNumber)).slice(0, TURN_SLOTS) : [];
     if (this.modal === 'history') this.render();
   }
 
@@ -1626,6 +1688,10 @@ export class App {
   private setOwner(id: number, owner: number | null): void {
     const game = this.game!;
     const s = game.state;
+    if (this.busy || (s.phase !== 'roll' && s.phase !== 'end')) {
+      this.showToast('Править владельцев можно в начале или в конце хода');
+      return;
+    }
     const c = BOARD[id];
     s.cells[id].owner = owner;
     if (owner === null) s.cells[id].mortgaged = false;

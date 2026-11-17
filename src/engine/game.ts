@@ -323,7 +323,7 @@ export class Game {
     const next = this.postMovePhase();
     if (s.debts.length) {
       s.debtResume = next;
-      s.phase = 'debt';
+      this.resolveDebts();
     } else {
       s.phase = next;
       if (this.player(s.current).bankrupt) this.nextPlayer();
@@ -570,21 +570,36 @@ export class Game {
   }
 
   /** Автоматически оплачивает следующие долги, если денег хватает. */
+  /**
+   * Оплачивает всё, что уже можно оплатить (в любом порядке — сначала то, на что хватает денег,
+   * в том числе деньгами, пришедшими по другим долгам из той же очереди). Долги выбывшим
+   * игрокам и долги выбывших отбрасываются. Если что-то оплатить нельзя — этот долг становится
+   * первым в очереди, и должник получает фазу «долг».
+   */
   private resolveDebts(): void {
     const s = this.state;
-    while (s.debts.length) {
-      const d = s.debts[0];
-      const p = this.player(d.debtor);
-      if (p.bankrupt) {
-        s.debts.shift();
-        continue;
+    let progress = true;
+    while (s.debts.length && progress) {
+      progress = false;
+      for (let i = 0; i < s.debts.length; i++) {
+        const d = s.debts[i];
+        const debtor = this.player(d.debtor);
+        const creditorGone = d.creditor !== null && this.player(d.creditor).bankrupt;
+        if (debtor.bankrupt || creditorGone) {
+          s.debts.splice(i, 1);
+          progress = true;
+          break;
+        }
+        if (debtor.money >= d.amount) {
+          this.addMoney(d.debtor, -d.amount);
+          if (d.creditor !== null) this.addMoney(d.creditor, d.amount);
+          s.debts.splice(i, 1);
+          progress = true;
+          break;
+        }
       }
-      if (p.money >= d.amount) {
-        this.addMoney(d.debtor, -d.amount);
-        if (d.creditor !== null) this.addMoney(d.creditor, d.amount);
-        s.debts.shift();
-        continue;
-      }
+    }
+    if (s.debts.length) {
       s.phase = 'debt';
       return;
     }
@@ -595,12 +610,25 @@ export class Game {
     if (this.player(s.current).bankrupt) this.nextPlayer();
   }
 
+  /** Может ли игрок ещё раздобыть деньги: продать дом или заложить что-то. */
+  private canRaise(playerId: number): boolean {
+    return this.ownedBy(playerId).some(
+      (id) => this.can(playerId, { type: 'sellHouse', cell: id }) || this.can(playerId, { type: 'mortgage', cell: id }),
+    );
+  }
+
   private declareBankruptcy(): void {
     const s = this.state;
     if (s.phase !== 'debt' || !s.debts.length) throw new GameError('Банкротство возможно только при долге');
+    const head = s.debts[0];
+    const debtor = this.player(head.debtor);
+    if (debtor.money >= head.amount) throw new GameError('Денег хватает — оплатите долг');
+    if (this.canRaise(debtor.id) && this.liquidationValue(debtor.id) >= head.amount) {
+      throw new GameError('Можно расплатиться: продайте дома или заложите улицы в «Имуществе»');
+    }
     const debt = s.debts.shift()!;
     const p = this.player(debt.debtor);
-    const creditor = debt.creditor === null ? null : this.player(debt.creditor);
+    const creditor = debt.creditor === null || this.player(debt.creditor).bankrupt ? null : this.player(debt.creditor);
 
     // Дома продаются банку за полцены.
     for (const id of this.ownedBy(p.id)) {
@@ -703,6 +731,12 @@ export class Game {
     const s = this.state;
     if (s.phase !== 'buy') throw new GameError('Нечего отклонять');
     const cellId = this.player(s.current).position;
+    if (s.cells[cellId].owner !== null) {
+      // Клетку уже кому-то отдали (например, ручной правкой) — аукцион не нужен.
+      s.phase = 'end';
+      this.finishAction();
+      return;
+    }
     const order: number[] = [];
     for (let i = 0; i < s.players.length; i++) {
       const id = (s.current + i) % s.players.length;
@@ -743,7 +777,7 @@ export class Game {
     const done = n === 0 || (n === 1 && a.bidder === a.participants[0]);
     if (done) {
       const cell = BOARD[a.cell];
-      if (a.bidder !== null) {
+      if (a.bidder !== null && s.cells[a.cell].owner === null) {
         this.addMoney(a.bidder, -a.bid);
         s.cells[a.cell].owner = a.bidder;
         this.emit({ kind: 'buy', player: a.bidder, cell: a.cell, price: a.bid, auction: true });
@@ -834,8 +868,9 @@ export class Game {
     // Имуществом распоряжается тот, от кого сейчас ждут действия: в начале и конце хода,
     // при решении о покупке (например, заложить улицу, чтобы хватило денег), на своей
     // ставке в аукционе. При долге — только продавать и закладывать.
+    // На аукционе (ход чужой) — как при долге: только продать дом или заложить, чтобы поднять ставку.
     const ok =
-      s.phase === 'roll' || s.phase === 'end' || s.phase === 'buy' || s.phase === 'auction' || (allowDebt && s.phase === 'debt');
+      s.phase === 'roll' || s.phase === 'end' || s.phase === 'buy' || (allowDebt && (s.phase === 'debt' || s.phase === 'auction'));
     if (!ok) throw new GameError('Сейчас нельзя управлять имуществом');
     if (playerId !== this.actor()) throw new GameError('Не ваш ход');
   }

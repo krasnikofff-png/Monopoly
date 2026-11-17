@@ -205,6 +205,65 @@ describe('Игровой движок', () => {
     expect(importCode('MM1.@@@')).toBeNull();
   });
 
+  it('банкрот не получает имущество и деньги по долгам (найдено критиком)', () => {
+    const g = Game.create(
+      Array.from({ length: 4 }, (_, i) => ({ name: 'P' + i, isBot: false })),
+      1,
+    );
+    const s = g.state;
+    const A = s.players[0];
+    A.inJail = true;
+    A.jailTurns = 2;
+    A.money = 100;
+    A.position = 10;
+    s.decks.surprise.order = ['s7', ...s.decks.surprise.order.filter((x) => x !== 's7')];
+    s.decks.surprise.index = 0;
+    s.players[1].money = 50;
+    s.cells[1].owner = 1;
+    s.cells[3].owner = 1;
+    forceDice(g, 3, 4); // третья попытка в тюрьме → штраф 500, клетка 17 — «каждый дарит по 100»
+    g.dispatch(0, { type: 'roll' });
+    expect(s.phase).toBe('debt');
+    expect(g.actor()).toBe(0);
+    g.dispatch(0, { type: 'bankrupt' });
+    expect(A.bankrupt).toBe(true);
+    // Долг P1 выбывшему игроку отменён, улицы остаются у P1.
+    expect(s.cells[1].owner).toBe(1);
+    expect(s.cells[3].owner).toBe(1);
+    expect(s.debts).toHaveLength(0);
+    for (const c of s.cells) if (c.owner !== null) expect(s.players[c.owner].bankrupt).toBe(false);
+  });
+
+  it('нельзя объявить банкротство, если можно расплатиться', () => {
+    const g = twoPlayers();
+    g.state.cells[39].owner = 1;
+    g.state.cells[39].houses = 0;
+    g.state.cells[1].owner = 0;
+    g.state.cells[3].owner = 0;
+    g.state.cells[6].owner = 0;
+    g.state.players[0].money = 300;
+    g.state.players[0].position = 35;
+    forceDice(g, 2, 2); // Рублёвка без домов: аренда 500
+    g.dispatch(0, { type: 'roll' });
+    expect(g.state.phase).toBe('debt');
+    expect(g.can(0, { type: 'bankrupt' })).toBe(false); // можно заложить улицы
+    g.dispatch(0, { type: 'mortgage', cell: 6 });
+    g.dispatch(0, { type: 'payDebt' });
+    expect(g.state.players[0].bankrupt).toBe(false);
+  });
+
+  it('итог аукциона не перебивает владельца, назначенного во время торгов', () => {
+    const g = twoPlayers();
+    forceDice(g, 1, 2);
+    g.dispatch(0, { type: 'roll' });
+    g.dispatch(0, { type: 'decline' });
+    g.dispatch(0, { type: 'bid', amount: 100 });
+    g.state.cells[3].owner = 1; // ручная правка
+    g.dispatch(1, { type: 'pass' });
+    expect(g.state.cells[3].owner).toBe(1);
+    expect(g.state.players[0].money).toBe(START_MONEY);
+  });
+
   it('боты доигрывают партию до конца без ошибок', () => {
     for (let seed = 1; seed <= 30; seed++) {
       const g = Game.create(
@@ -224,6 +283,7 @@ describe('Игровой движок', () => {
         g.dispatch(actor, action!);
         steps++;
         for (const p of g.state.players) expect(p.money).toBeGreaterThanOrEqual(0);
+        for (const c of g.state.cells) if (c.owner !== null) expect(g.state.players[c.owner].bankrupt).toBe(false);
         const s = g.state;
         expect(s.housesLeft).toBeGreaterThanOrEqual(0);
         expect(s.hotelsLeft).toBeGreaterThanOrEqual(0);
