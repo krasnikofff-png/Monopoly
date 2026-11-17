@@ -3,6 +3,8 @@ import { CARD_BY_ID } from '../data/cards';
 import { botDecide, tradeGain } from '../engine/bot';
 import { iconSvg, installIcons } from './icons';
 import { normalizeToken, tokenSvg } from './tokens';
+import { Sound, type SoundName } from './sound';
+import { confetti, floatText, flyCoins, shake, tweenNumber } from './fx';
 import { Game, GameError, PLAYER_COLORS, PLAYER_TOKENS, formatMoney } from '../engine/game';
 import type { Action, ColorGroup, GameEvent, GameState } from '../engine/types';
 
@@ -23,7 +25,8 @@ interface TradeDraft {
   giveMoney: number;
   getMoney: number;
 }
-const STEP_MS = 140;
+const STEP_MS = 170;
+const PREFS_KEY = 'moskva-magnat-prefs-v1';
 const BOT_DELAY = 650;
 
 function groupCellsBuilt(game: Game, group: ColorGroup): boolean {
@@ -193,11 +196,25 @@ export class App {
   private draft: TradeDraft | null = null;
   /** Последний человек, державший телефон (для экрана передачи хода). */
   private holder: number | null = null;
+  private sound = new Sound();
+  private prefs = { sound: true, vibrate: true };
+  /** Отображаемые суммы денег (плавно догоняют настоящие). */
+  private shownMoney: number[] = [];
+  private hopMs = STEP_MS;
+  private prevCardId = -1;
+  private prevModalKey: string | null = null;
+  private prevCurrent = -1;
 
   constructor(root: HTMLElement) {
     this.root = root;
     installIcons();
     this.setup = this.loadSetup();
+    try {
+      Object.assign(this.prefs, JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}'));
+    } catch {
+      /* настройки по умолчанию */
+    }
+    this.sound.enabled = this.prefs.sound;
     root.addEventListener('click', (e) => this.onClick(e));
     root.addEventListener('input', (e) => {
       const t = e.target as HTMLInputElement;
@@ -277,6 +294,8 @@ export class App {
     for (const p of game.state.players) p.token = normalizeToken(p.token);
     this.game = game;
     this.shownPos = game.state.players.map((p) => p.position);
+    this.shownMoney = game.state.players.map((p) => p.money);
+    this.prevCurrent = game.state.current;
     if (game.state.dice) this.diceShown = game.state.dice;
     this.modal = null;
     this.render();
@@ -351,8 +370,68 @@ export class App {
     this.scheduleBot();
   }
 
+  private sfx(name: SoundName): void {
+    this.sound.play(name);
+  }
+
+  private vib(ms: number | number[]): void {
+    if (this.prefs.vibrate) navigator.vibrate?.(ms);
+  }
+
+  private savePrefs(): void {
+    this.sound.enabled = this.prefs.sound;
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify(this.prefs));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private rectOf(sel: string): DOMRect | null {
+    return this.root.querySelector(sel)?.getBoundingClientRect() ?? null;
+  }
+
+  private chipRect(player: number): DOMRect | null {
+    return this.rectOf(`[data-chip="${player}"]`);
+  }
+
+  /** Деньги: монеты летят от плательщика к получателю (null — банк/центр поля). */
+  private async moneyFx(from: number | null, to: number | null, amount: number, toRect?: DOMRect | null): Promise<void> {
+    const bank = this.rectOf('.ccard') ?? this.rectOf('.center');
+    const a = from !== null ? this.chipRect(from) : bank;
+    const b = toRect ?? (to !== null ? this.chipRect(to) : bank);
+    const text = amount.toLocaleString('ru-RU');
+    if (from !== null) {
+      const r = this.chipRect(from);
+      if (r) floatText(r, `−${text}`, 'minus');
+      void this.tweenMoney(from, this.shownMoney[from] - amount);
+    }
+    this.sfx(from !== null && to === null ? 'pay' : 'coin');
+    const coins = Math.max(3, Math.min(10, Math.round(Math.log10(Math.max(amount, 10)) * 2)));
+    if (a && b) await flyCoins(a, b, coins);
+    if (to !== null) {
+      const r = this.chipRect(to);
+      if (r) floatText(r, `+${text}`, 'plus');
+      if (from !== null) this.sfx('coin');
+      void this.tweenMoney(to, this.shownMoney[to] + amount);
+    }
+    await sleep(120);
+  }
+
+  private tweenMoney(player: number, target: number): Promise<void> {
+    const start = this.shownMoney[player];
+    this.shownMoney[player] = target;
+    return tweenNumber(start, target, 650, (v) => {
+      const el = this.root.querySelector(`[data-chip="${player}"] .pm`);
+      if (el && !this.game?.player(player).bankrupt) el.textContent = v.toLocaleString('ru-RU');
+    });
+  }
+
   private async play(events: GameEvent[]): Promise<void> {
-    for (const e of events) {
+    const game = this.game!;
+    for (let i = 0; i < events.length; i++) {
+      const e = events[i];
+      const next = events[i + 1];
       switch (e.kind) {
         case 'dice':
           await this.animateDice(e.dice);
@@ -361,50 +440,128 @@ export class App {
           await this.animateMove(e.player, e.to, e.direct);
           break;
         case 'card':
+          this.sfx('card');
           this.modal = 'card';
           this.render();
-          if (this.game!.player(this.game!.state.current).isBot) {
-            await sleep(1600);
+          if (game.player(game.state.current).isBot) {
+            await sleep(1700);
             this.modal = null;
           } else {
             await this.waitModalClosed();
           }
           break;
         case 'money':
-          this.floatMoney(e.player, e.delta);
+          if (e.delta < 0 && next?.kind === 'money' && next.delta === -e.delta && next.player !== e.player) {
+            await this.moneyFx(e.player, next.player, -e.delta);
+            i++;
+          } else if (e.delta < 0 && next?.kind === 'buy' && next.player === e.player) {
+            await this.moneyFx(e.player, null, -e.delta, this.rectOf(`[data-cell="${next.cell}"]`));
+          } else if (e.delta < 0) {
+            await this.moneyFx(e.player, null, -e.delta);
+          } else {
+            await this.moneyFx(null, e.player, e.delta);
+          }
+          break;
+        case 'buy': {
+          this.sfx('buy');
+          this.vib([15, 40, 15]);
+          this.render();
+          const cell = this.root.querySelector(`[data-cell="${e.cell}"]`);
+          const r = cell?.getBoundingClientRect();
+          if (r) confetti(r, [game.player(e.player).color, '#ffd84d', '#5d52ec', '#ffffff'], 22, 0.8);
+          cell?.animate(
+            [{ transform: 'scale(1)' }, { transform: 'scale(1.25)', zIndex: 3, offset: 0.4 }, { transform: 'scale(1)' }],
+            { duration: 450, easing: 'ease-out' },
+          );
+          await sleep(350);
+          break;
+        }
+        case 'build': {
+          this.sfx('build');
+          this.vib(20);
+          this.render();
+          this.root
+            .querySelector(`[data-cell="${e.cell}"] .strip`)
+            ?.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.35)' }, { transform: 'scale(1)' }], { duration: 350 });
+          break;
+        }
+        case 'jail':
+          this.sfx('jail');
+          this.vib([60, 40, 60]);
+          shake(this.root.querySelector('.board'), 7);
+          await sleep(500);
           break;
         case 'bankrupt':
-          this.showToast(`${this.game!.player(e.player).name} — банкрот!`);
+          this.sfx('lose');
+          shake(this.root.querySelector(`[data-chip="${e.player}"]`), 8);
+          this.showToast(`${game.player(e.player).name} — банкрот!`);
+          await sleep(600);
           break;
         case 'trade': {
           const o = e.offer;
-          this.showToast(`${this.game!.player(o.to).name} ${e.accepted ? 'принимает ✅' : 'отклоняет ❌'} обмен`);
+          this.sfx(e.accepted ? 'deal' : 'click');
+          this.showToast(`${game.player(o.to).name} ${e.accepted ? 'принимает ✅' : 'отклоняет ❌'} обмен`);
+          break;
+        }
+        case 'gameover': {
+          const w = e.winner !== null ? game.player(e.winner) : null;
+          this.sfx(w && !w.isBot ? 'win' : 'lose');
+          this.render();
+          const r = this.rectOf('.center');
+          if (r) {
+            const colors = ['#ffd84d', '#5d52ec', '#ff5a7a', '#2ecc71', '#5ec8f2'];
+            confetti(r, colors, 60, 1.6);
+            window.setTimeout(() => confetti(r, colors, 40, 1.3), 400);
+          }
           break;
         }
         default:
           break;
       }
     }
+    // Страховка: показываем точные суммы после всех эффектов.
+    game.state.players.forEach((p, i) => {
+      if (this.shownMoney[i] !== p.money) void this.tweenMoney(i, p.money);
+    });
   }
 
   private async animateDice(dice: [number, number]): Promise<void> {
+    this.sfx('dice');
+    this.vib(25);
     this.rolling = true;
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 8; i++) {
       this.diceShown = [1 + Math.floor(Math.random() * 6), 1 + Math.floor(Math.random() * 6)];
       this.render();
-      await sleep(60);
+      await sleep(65);
     }
     this.rolling = false;
     this.diceShown = dice;
     this.render();
-    await sleep(350);
+    this.root.querySelectorAll('.die').forEach((d, i) =>
+      d.animate(
+        [
+          { transform: 'translateY(-18px) rotate(-14deg) scale(1.1)' },
+          { transform: 'translateY(0) scale(1.12, .88)', offset: 0.6 },
+          { transform: 'none' },
+        ],
+        { duration: 320, delay: i * 40, easing: 'ease-out' },
+      ),
+    );
+    if (dice[0] === dice[1]) {
+      this.sfx('double');
+      const r = this.rectOf('.dice');
+      if (r) confetti(r, ['#ffd84d', '#ffffff', '#5d52ec'], 14, 0.6);
+    }
+    await sleep(420);
   }
 
   private async animateMove(player: number, to: number, direct: boolean): Promise<void> {
     if (direct) {
+      this.hopMs = 520;
       this.shownPos[player] = to;
       this.render();
-      await sleep(300);
+      this.hopMs = STEP_MS;
+      await sleep(560);
       return;
     }
     const from = this.shownPos[player];
@@ -416,10 +573,12 @@ export class App {
       pos = (pos + dir + 40) % 40;
       this.shownPos[player] = pos;
       this.render();
-      navigator.vibrate?.(8);
+      this.sfx('step');
+      this.vib(8);
       await sleep(STEP_MS);
     }
-    await sleep(150);
+    this.sfx('land');
+    await sleep(160);
   }
 
   private modalResolve: (() => void) | null = null;
@@ -460,18 +619,13 @@ export class App {
     }, 1800);
   }
 
-  private floatMoney(player: number, delta: number): void {
-    const chip = this.root.querySelector(`[data-chip="${player}"]`);
-    if (!chip) return;
-    const el = document.createElement('div');
-    el.className = `float ${delta > 0 ? 'plus' : 'minus'}`;
-    el.textContent = `${delta > 0 ? '+' : '−'}${Math.abs(delta).toLocaleString('ru-RU')}`;
-    chip.appendChild(el);
-    window.setTimeout(() => el.remove(), 1200);
-  }
-
   private onClick(e: Event): void {
+    this.sound.unlock();
     const t = (e.target as HTMLElement).closest<HTMLElement>('[data-act],[data-cell],[data-bid],[data-tcell],[data-money]');
+    if (t && t.matches('.btn, .nav button, .hbtn, .seg button, .kind, .partner, .tcell, .tmoney button, [data-cell]')) {
+      const a = t.dataset.act;
+      if (a !== 'roll') this.sfx('click');
+    }
     if (!t) {
       const el = e.target as HTMLElement;
       if (el.classList.contains('overlay') && !el.classList.contains('locked')) this.closeModal();
@@ -572,6 +726,20 @@ export class App {
       case 'close':
         this.draft = null;
         return this.closeModal();
+      case 'settings':
+        this.modal = 'settings';
+        return this.render();
+      case 'toggleSound':
+        this.prefs.sound = !this.prefs.sound;
+        this.savePrefs();
+        this.sound.unlock();
+        this.sfx('coin');
+        return this.render();
+      case 'toggleVibro':
+        this.prefs.vibrate = !this.prefs.vibrate;
+        this.savePrefs();
+        this.vib(30);
+        return this.render();
       case 'assets':
         this.modal = 'assets';
         return this.render();
@@ -609,10 +777,22 @@ export class App {
     if (!game) return;
     const s = game.state;
     const sum = s.dice ? s.dice[0] + s.dice[1] : null;
+    // Запоминаем, где были фишки, чтобы анимировать перелёт (FLIP).
+    const prev = new Map<string, DOMRect>();
+    this.root.querySelectorAll<HTMLElement>('[data-tok]').forEach((el) => prev.set(el.dataset.tok!, el.getBoundingClientRect()));
+    const handoff = this.needsHandoff();
+    const modalKey = handoff ? `handoff:${game.actor()}` : this.modal;
+    const modalEnter = modalKey !== this.prevModalKey;
+    this.prevModalKey = modalKey;
+    const turnChanged = s.current !== this.prevCurrent;
+    if (turnChanged) {
+      this.prevCurrent = s.current;
+      if (!game.player(s.current).isBot) this.sfx('turn');
+    }
     this.root.innerHTML = `
       <div class="game">
         <header class="hdr">
-          <button class="hbtn" data-act="menu" aria-label="Меню">${UI_ICONS.menu}</button>
+          <button class="hbtn" data-act="settings" aria-label="Меню">${UI_ICONS.menu}</button>
           <div class="logo hdr-logo"><span>МОСКВА</span><b>МАГНАТ</b></div>
           <button class="hbtn" data-act="log" aria-label="История">${UI_ICONS.clock}</button>
         </header>
@@ -635,9 +815,29 @@ export class App {
           <button data-act="trade">${UI_ICONS.deal}<span>Сделки</span></button>
           <button data-act="log">${UI_ICONS.list}<span>История</span></button>
         </nav>
-        ${this.needsHandoff() ? this.handoffHtml() : this.modalHtml()}
+        ${handoff ? this.handoffHtml() : this.modalHtml()}
         ${this.toast ? `<div class="toast">${esc(this.toast)}</div>` : ''}
       </div>`;
+    if (modalEnter) this.root.querySelector('.overlay')?.classList.add('enter');
+    if (turnChanged) this.root.querySelector('.chip.active')?.classList.add('enter');
+    this.root.querySelectorAll<HTMLElement>('[data-tok]').forEach((el) => {
+      const a = prev.get(el.dataset.tok!);
+      if (!a) return;
+      const b = el.getBoundingClientRect();
+      const dx = a.left - b.left;
+      const dy = a.top - b.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      const lift = Math.min(46, 16 + Math.hypot(dx, dy) * 0.2);
+      el.animate(
+        [
+          { transform: `translate(${dx}px, ${dy}px)` },
+          { transform: `translate(${dx / 2}px, ${dy / 2 - lift}px) scale(1.15)`, offset: 0.5 },
+          { transform: 'translate(0, 0) scale(1.2, 0.8)', offset: 0.82 },
+          { transform: 'none' },
+        ],
+        { duration: this.hopMs, easing: 'ease-in-out' },
+      );
+    });
   }
 
   private playerChip(id: number): string {
@@ -648,7 +848,7 @@ export class App {
     return `<div class="chip ${active ? 'active' : ''} ${p.bankrupt ? 'out' : ''}" data-chip="${id}" style="--pc:${p.color}">
       ${active ? `<span class="badge">${mine ? 'ВЫ · ХОД' : 'ХОД'}</span>` : ''}
       <div class="chip-top"><span class="tok">${tk(p)}</span><span class="pn">${esc(p.name)}${p.inJail ? ' 🔒' : ''}</span></div>
-      <span class="pm">${p.bankrupt ? 'банкрот' : p.money.toLocaleString('ru-RU')}</span>
+      <span class="pm">${p.bankrupt ? 'банкрот' : (this.shownMoney[id] ?? p.money).toLocaleString('ru-RU')}</span>
     </div>`;
   }
 
@@ -660,7 +860,7 @@ export class App {
     const owner = own.owner !== null ? game.player(own.owner) : null;
     const tokens = game.state.players
       .filter((p) => !p.bankrupt && this.shownPos[p.id] === id)
-      .map((p) => `<span class="token">${tk(p)}</span>`)
+      .map((p) => `<span class="token" data-tok="${p.id}">${tk(p)}</span>`)
       .join('');
     const houses =
       own.houses === 5 ? '<span class="hotel"></span>' : '<span class="house"></span>'.repeat(own.houses);
@@ -703,7 +903,9 @@ export class App {
         : `Аренда ${formatMoney(c.rent![0])}, с отелем — ${formatMoney(c.rent![5])}`;
     } else if (c.type === 'start') foot = `+${formatMoney(START_BONUS)} за каждый проход`;
     const amount = c.price ?? c.amount;
-    return `<div class="ccard" data-cell="${id}" style="--gc:${c.group ? GROUP_COLORS[c.group] : '#7c6cf0'}">
+    const enter = id !== this.prevCardId;
+    this.prevCardId = id;
+    return `<div class="ccard ${enter ? 'enter' : ''}" data-cell="${id}" style="--gc:${c.group ? GROUP_COLORS[c.group] : '#7c6cf0'}">
       <div class="ccard-bar"></div>
       <span class="cpill" ${pillStyle}>${esc(pill)}</span>
       <div class="ccard-name">${esc(c.name)}</div>
@@ -728,7 +930,7 @@ export class App {
     const last = esc(s.log[s.log.length - 1] ?? '');
     if (this.busy) {
       const cur = game.player(s.current);
-      return this.bar(cur, `Ход: ${esc(cur.name)}`, last, '', true);
+      return this.bar(cur, `Ход: ${esc(cur.name)}`, this.rolling ? 'Бросаем кубики…' : 'Фишка в пути…', '', true);
     }
 
     if (s.phase === 'gameover') {
@@ -834,6 +1036,13 @@ export class App {
         .reverse()
         .map((l) => `<div>${esc(l)}</div>`)
         .join('')}</div><button class="btn blue" data-act="close">Закрыть</button>`;
+    } else if (this.modal === 'settings') {
+      const tg = (on: boolean) => `<span class="toggle ${on ? 'on' : ''}"><i></i></span>`;
+      body = `<h3>Настройки</h3>
+        <button class="setting" data-act="toggleSound"><span>Звук</span>${tg(this.prefs.sound)}</button>
+        <button class="setting" data-act="toggleVibro"><span>Вибрация</span>${tg(this.prefs.vibrate)}</button>
+        <button class="btn red" data-act="menu">Выйти в главное меню</button>
+        <button class="btn ghost" data-act="close">Закрыть</button>`;
     } else if (this.modal === 'trade' && this.draft) {
       body = this.tradeHtml(this.draft);
     } else if (this.modal === 'assets') {
