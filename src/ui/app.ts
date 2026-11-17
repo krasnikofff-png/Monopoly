@@ -4,6 +4,8 @@ import { botDecide, tradeGain } from '../engine/bot';
 import { iconSvg, installIcons } from './icons';
 import { normalizeToken, tokenSvg } from './tokens';
 import { Sound, type SoundName } from './sound';
+import { CloudSave } from './cloud';
+import { RESTORE_LABEL, restoredDavidYana } from './restore';
 import { confetti, floatText, flyCoins, shake, tweenNumber } from './fx';
 import { Game, GameError, PLAYER_COLORS, PLAYER_TOKENS, formatMoney } from '../engine/game';
 import type { Action, ColorGroup, GameEvent, GameState } from '../engine/types';
@@ -115,6 +117,17 @@ const MAP_SVG = `<svg class="map" viewBox="0 0 100 100" preserveAspectRatio="non
   </g>
 </svg>`;
 
+/** Проверяет и разбирает сохранённую партию. */
+function parseSave(json: string): GameState | null {
+  try {
+    const s = JSON.parse(json) as GameState;
+    if (s && s.version === 1 && s.phase !== 'gameover' && Array.isArray(s.players) && Array.isArray(s.cells)) return s;
+  } catch {
+    /* повреждённое сохранение */
+  }
+  return null;
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function esc(s: string): string {
@@ -142,9 +155,9 @@ function tk(p: { token: string; color: string }): string {
 /** Подписи клеток на поле: короткие, с мягкими переносами (\u00AD) в длинных словах. */
 const S = '\u00AD';
 const CELL_LABELS: Record<number, string> = {
-  1: 'Капотня',
+  1: `Капот${S}ня`,
   3: `Бирю${S}лёво`,
-  6: 'Выхино',
+  6: `Вы${S}хино`,
   8: `Марь${S}ино`,
   9: 'Митино',
   10: 'Тюрьма',
@@ -202,6 +215,9 @@ export class App {
   /** Последний человек, державший телефон (для экрана передачи хода). */
   private holder: number | null = null;
   private sound = new Sound();
+  private cloud = new CloudSave();
+  /** Сохранение из облака (подгружается асинхронно при запуске). */
+  private cloudState: GameState | null = null;
   private prefs = { sound: true, vibrate: true };
   /** Отображаемые суммы денег (плавно догоняют настоящие). */
   private shownMoney: number[] = [];
@@ -213,9 +229,10 @@ export class App {
   /** Всплывающее окно-событие в центре поля. */
   private notice: (Notice & { id: number; at: number }) | null = null;
   private noticeSeq = 0;
+  private noticeResolve: (() => void) | null = null;
   private prevNoticeId = -1;
 
-  constructor(root: HTMLElement) {
+  constructor(root: HTMLElement, resume?: GameState | null) {
     this.root = root;
     installIcons();
     this.setup = this.loadSetup();
@@ -230,7 +247,18 @@ export class App {
       const t = e.target as HTMLInputElement;
       if (t.dataset.name !== undefined) this.setup[Number(t.dataset.name)].name = t.value;
     });
-    this.renderMenu();
+    const hot = resume ? parseSave(JSON.stringify(resume)) : null;
+    if (hot) this.startGame(new Game(hot));
+    else this.renderMenu();
+    void this.cloud.load().then((payload) => {
+      this.cloudState = payload ? parseSave(payload.json) : null;
+      if (!this.game) this.renderMenu();
+    });
+  }
+
+  /** Текущая партия — для передачи в новую версию страницы при обновлении. */
+  snapshot(): GameState | null {
+    return this.game && this.game.state.phase !== 'gameover' ? this.game.state : null;
   }
 
   // ——————————————————— Меню ———————————————————
@@ -278,6 +306,7 @@ export class App {
           }</div>
           <button class="btn big green" data-act="new" ${humans === 0 ? 'disabled' : ''}>Новая игра</button>
           ${hasSave ? `<button class="btn big blue" data-act="continue">Продолжить</button>` : ''}
+          ${hasSave ? '' : `<button class="btn ghost" data-act="restore">Восстановить: ${RESTORE_LABEL}</button>`}
         </div>
       </div>`;
   }
@@ -312,21 +341,28 @@ export class App {
     this.scheduleBot();
   }
 
+  /** Самое свежее сохранение: из памяти браузера или из облака. */
   private loadSave(): GameState | null {
+    let local: GameState | null = null;
     try {
       const raw = localStorage.getItem(SAVE_KEY);
-      if (!raw) return null;
-      const s = JSON.parse(raw) as GameState;
-      return s.version === 1 && s.phase !== 'gameover' ? s : null;
+      if (raw) local = parseSave(raw);
     } catch {
-      return null;
+      /* память браузера недоступна */
     }
+    const cloud = this.cloudState;
+    if (!local) return cloud;
+    if (!cloud) return local;
+    const score = (g: GameState) => g.turnNumber * 1000 + g.log.length;
+    return score(cloud) >= score(local) ? cloud : local;
   }
 
   private save(): void {
     if (!this.game) return;
+    const json = JSON.stringify(this.game.state);
+    this.cloud.save(json);
     try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(this.game.state));
+      localStorage.setItem(SAVE_KEY, json);
     } catch {
       /* хранилище недоступно — играем без сохранения */
     }
@@ -453,21 +489,15 @@ export class App {
           this.sfx('card');
           this.modal = 'card';
           this.render();
-          if (game.player(game.state.current).isBot) {
-            await sleep(1700);
-            this.modal = null;
-          } else {
-            await this.waitModalClosed();
-          }
+          await this.waitModalClosed();
           break;
         case 'notice':
-          this.showNotice(e);
-          await sleep(950);
+          await this.showNotice(e);
           break;
         case 'money':
-          if (e.delta < 0 && next?.kind === 'buy' && next.player === e.player) {
+          if (e.delta < 0 && next?.kind === 'buy' && next.player === e.player && (next.auction || game.player(e.player).isBot)) {
             const cell = BOARD[next.cell];
-            this.showNotice({
+            await this.showNotice({
               kind: 'notice',
               tone: 'info',
               title: next.auction ? 'Аукцион' : 'Покупка',
@@ -476,7 +506,6 @@ export class App {
               from: e.player,
               to: null,
             });
-            await sleep(700);
           }
           if (e.delta < 0 && next?.kind === 'money' && next.delta === -e.delta && next.player !== e.player) {
             await this.moneyFx(e.player, next.player, -e.delta);
@@ -513,17 +542,16 @@ export class App {
           break;
         }
         case 'jail':
-          this.showNotice({ kind: 'notice', tone: 'bad', title: 'Тюрьма', text: `${game.player(e.player).name} отправляется в тюрьму`, cell: 10 });
           this.sfx('jail');
           this.vib([60, 40, 60]);
           shake(this.root.querySelector('.board'), 7);
-          await sleep(500);
+          await sleep(400);
+          await this.showNotice({ kind: 'notice', tone: 'bad', title: 'Тюрьма', text: `${game.player(e.player).name} отправляется в тюрьму`, cell: 10 });
           break;
         case 'bankrupt':
           this.sfx('lose');
           shake(this.root.querySelector(`[data-chip="${e.player}"]`), 8);
-          this.showNotice({ kind: 'notice', tone: 'bad', title: 'Банкротство', text: `${game.player(e.player).name} выбывает из игры` });
-          await sleep(600);
+          await this.showNotice({ kind: 'notice', tone: 'bad', title: 'Банкротство', text: `${game.player(e.player).name} выбывает из игры` });
           break;
         case 'trade': {
           const o = e.offer;
@@ -531,7 +559,7 @@ export class App {
           const names = (cells: number[], money: number) =>
             [...cells.map((id) => BOARD[id].short ?? BOARD[id].name), money ? formatMoney(money) : ''].filter(Boolean).join(', ') || 'ничего';
           if (e.accepted) {
-            this.showNotice({
+            await this.showNotice({
               kind: 'notice',
               tone: 'info',
               title: 'Сделка',
@@ -539,7 +567,6 @@ export class App {
               from: o.from,
               to: o.to,
             });
-            await sleep(1200);
           } else {
             this.showToast(`${game.player(o.to).name} отклоняет обмен`);
           }
@@ -560,11 +587,6 @@ export class App {
         default:
           break;
       }
-    }
-    if (this.notice) {
-      const left = 2000 - (performance.now() - this.notice.at);
-      if (left > 0) await sleep(left);
-      this.notice = null;
     }
     // Страховка: показываем точные суммы после всех эффектов.
     game.state.players.forEach((p, i) => {
@@ -675,7 +697,7 @@ export class App {
     }
     if (!t) {
       const el = e.target as HTMLElement;
-      if (el.classList.contains('overlay') && !el.classList.contains('locked')) this.closeModal();
+      if (el.classList.contains('overlay') && !el.classList.contains('locked') && !el.classList.contains('sticky')) this.closeModal();
       return;
     }
     const game = this.game;
@@ -759,6 +781,12 @@ export class App {
         void this.act(me, { type: 'proposeTrade', offer });
         return;
       }
+      case 'restore': {
+        const st = restoredDavidYana();
+        this.startGame(new Game(st));
+        this.save();
+        return;
+      }
       case 'continue': {
         const s = this.loadSave();
         if (s) this.startGame(new Game(s));
@@ -777,8 +805,7 @@ export class App {
         this.modal = 'settings';
         return this.render();
       case 'dismissNotice':
-        this.notice = null;
-        return this.render();
+        return this.dismissNotice();
       case 'toggleSound':
         this.prefs.sound = !this.prefs.sound;
         this.savePrefs();
@@ -948,10 +975,20 @@ export class App {
     return s.phase === 'auction' || s.phase === 'trade' || s.phase === 'debt' ? this.game!.actor() : s.current;
   }
 
-  private showNotice(n: Notice): void {
+  /** Показывает окно-событие и ждёт, пока игрок нажмёт «OK». */
+  private showNotice(n: Notice): Promise<void> {
     this.notice = { ...n, id: ++this.noticeSeq, at: performance.now() };
     this.sfx(n.tone === 'bad' ? 'lose' : n.tone === 'gain' ? 'turn' : 'click');
     this.render();
+    return new Promise((r) => (this.noticeResolve = r));
+  }
+
+  private dismissNotice(): void {
+    this.notice = null;
+    const r = this.noticeResolve;
+    this.noticeResolve = null;
+    this.render();
+    r?.();
   }
 
   private noticeHtml(): string {
@@ -970,13 +1007,14 @@ export class App {
       n.from !== undefined || n.to !== undefined
         ? `<div class="nflow">${who(n.from)}${n.from !== undefined && n.to !== undefined ? '<i>→</i>' : ''}${who(n.to)}</div>`
         : '';
-    const cell = n.cell !== undefined && isOwnable(BOARD[n.cell]) ? `<div class="ncell">за «${esc(BOARD[n.cell].name)}»</div>` : '';
-    return `<div class="notice tone-${n.tone} ${enter ? 'enter' : ''}" data-act="dismissNotice">
+    const cell = n.amount && n.cell !== undefined && isOwnable(BOARD[n.cell]) ? `<div class="ncell">за «${esc(BOARD[n.cell].name)}»</div>` : '';
+    return `<div class="notice tone-${n.tone} ${enter ? 'enter' : ''}">
       <span class="npill">${esc(n.title)}</span>
       ${flow}
       <div class="ntext">${esc(n.text)}</div>
       ${n.amount ? `<div class="namount">${formatMoney(n.amount)}</div>` : ''}
       ${cell}
+      <button class="btn green nok" data-act="dismissNotice">OK</button>
     </div>`;
   }
 
@@ -996,11 +1034,12 @@ export class App {
         const own = game.state.cells[id];
         const color = c.group ? GROUP_COLORS[c.group] : '#9b97c4';
         const houses = own.houses === 5 ? '<i class="hotel"></i>' : '<i class="house"></i>'.repeat(own.houses);
-        const label = CELL_LABELS[id] ?? c.short ?? c.name;
+        const label = c.short ?? c.name;
         return `<button class="mcard ${own.mortgaged ? 'mortgaged' : ''}" data-cell="${id}" style="--gc:${color}">
-          <span class="mbar">${houses}</span>
+          <span class="mbar"></span>
           ${c.type === 'property' ? '' : `<span class="mico">${cellIcon(id)}</span>`}
           <span class="mname">${esc(label)}</span>
+          ${houses ? `<span class="mhouses">${houses}</span>` : ''}
           <span class="mprice">${own.mortgaged ? 'залог' : `${game.rentFor(id, 7).toLocaleString('ru-RU')} ₽`}</span>
         </button>`;
       })
@@ -1089,13 +1128,11 @@ export class App {
     if (s.phase === 'trade' && s.trade) {
       const o = s.trade;
       if (o.to !== me) return this.bar(game.player(o.to), `${esc(game.player(o.to).name)} думает`, 'Рассматривает предложение обмена…', '', true);
-      const list = (cells: number[], money: number) =>
-        [...cells.map((id) => esc(BOARD[id].short ?? BOARD[id].name)), money ? formatMoney(money) : ''].filter(Boolean).join(', ') || 'ничего';
       return this.bar(
         game.player(o.from),
         `Обмен от ${esc(game.player(o.from).name)}`,
-        `Получаете: <b>${list(o.giveCells, o.giveMoney)}</b><br>Отдаёте: <b>${list(o.getCells, o.getMoney)}</b>`,
-        `<button class="btn green" data-act="acceptTrade">Принять</button><button class="btn yellow" data-act="rejectTrade">Отклонить</button>`,
+        'Посмотрите предложение и примите решение.',
+        '',
       );
     }
     if (actor !== me) {
@@ -1148,9 +1185,13 @@ export class App {
   }
 
   private modalHtml(): string {
-    if (!this.modal || !this.game) return '';
+    if (!this.game) return '';
     const game = this.game;
     const s = game.state;
+    if (!this.modal && s.phase === 'trade' && s.trade && s.trade.to === this.me() && !game.player(s.trade.to).isBot) {
+      return `<div class="overlay sticky"><div class="modal">${this.offerHtml()}</div></div>`;
+    }
+    if (!this.modal) return '';
     let body = '';
     if (this.modal === 'card' && s.lastCard) {
       const card = CARD_BY_ID[s.lastCard];
@@ -1200,6 +1241,34 @@ export class App {
       body = this.cellCard(Number(this.modal.slice(5)));
     }
     return `<div class="overlay"><div class="modal">${body}</div></div>`;
+  }
+
+  /** Входящее предложение обмена — целиком, с двумя колонками. */
+  private offerHtml(): string {
+    const game = this.game!;
+    const o = game.state.trade!;
+    const from = game.player(o.from);
+    const me = game.player(o.to);
+    const list = (cells: number[], money: number) => {
+      const items = cells.map((id) => {
+        const c = BOARD[id];
+        return `<div class="oitem"><span class="sw" style="background:${c.group ? GROUP_COLORS[c.group] : '#9b97c4'}"></span>${cellIcon(id, 'ico inline')}<span>${esc(c.name)}</span></div>`;
+      });
+      if (money) items.push(`<div class="oitem money">${formatMoney(money)}</div>`);
+      return items.join('') || '<div class="empty">ничего</div>';
+    };
+    const after = me.money + o.giveMoney - o.getMoney;
+    return `<h3>Предложение обмена</h3>
+      <div class="ofrom">${tk(from)}<b>${esc(from.name)}</b> предлагает сделку</div>
+      <div class="tcols">
+        <div class="tside"><div class="ttitle">Вы получаете</div>${list(o.giveCells, o.giveMoney)}</div>
+        <div class="tside"><div class="ttitle">Вы отдаёте</div>${list(o.getCells, o.getMoney)}</div>
+      </div>
+      <div class="hint">После сделки у вас будет ${formatMoney(after)}</div>
+      <div class="row">
+        <button class="btn yellow" data-act="rejectTrade">Отклонить</button>
+        <button class="btn green" data-act="acceptTrade">Принять</button>
+      </div>`;
   }
 
   private handoffHtml(): string {

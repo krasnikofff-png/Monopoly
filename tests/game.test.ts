@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BOARD, START_BONUS, START_MONEY } from '../src/data/board';
 import { botDecide } from '../src/engine/bot';
 import { Game } from '../src/engine/game';
+import { restoredDavidYana } from '../src/ui/restore';
 
 function twoPlayers(seed = 1) {
   return Game.create(
@@ -159,6 +160,23 @@ describe('Игровой движок', () => {
     g.state.cells[3].owner = 0;
     g.state.cells[1].houses = 1;
     expect(g.can(0, { type: 'proposeTrade', offer: { to: 1, giveCells: [3], getCells: [], giveMoney: 0, getMoney: 0 } })).toBe(false);
+  });
+
+  it('восстановленная партия Давид — Яна корректна и доигрывается', () => {
+    const st = restoredDavidYana();
+    expect(st.players.map((p) => p.money)).toEqual([1760, 890]);
+    expect(st.cells.filter((c) => c.owner === 0)).toHaveLength(12);
+    expect(st.cells.filter((c) => c.owner === 1)).toHaveLength(10);
+    expect(st.current).toBe(1);
+    for (const p of st.players) p.isBot = true;
+    const g = new Game(st);
+    let steps = 0;
+    while (g.state.phase !== 'gameover' && steps < 20000) {
+      const a = g.actor();
+      g.dispatch(a, botDecide(g, a)!);
+      steps++;
+    }
+    expect(g.state.phase).toBe('gameover');
   });
 
   it('боты доигрывают партию до конца без ошибок', () => {
