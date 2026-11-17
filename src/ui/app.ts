@@ -950,7 +950,7 @@ export class App {
     const owner = own.owner !== null ? game.player(own.owner) : null;
     const tokens = game.state.players
       .filter((p) => !p.bankrupt && this.shownPos[p.id] === id)
-      .map((p) => `<span class="token" data-tok="${p.id}">${tk(p)}</span>`)
+      .map((p) => `<span class="token ${p.id === game.state.current ? 'cur' : ''}" data-tok="${p.id}" style="--pc:${p.color}">${tk(p)}</span>`)
       .join('');
     const houses =
       own.houses === 5 ? '<span class="hotel"></span>' : '<span class="house"></span>'.repeat(own.houses);
@@ -1028,15 +1028,17 @@ export class App {
     if (!owned.length) {
       return `<div class="mycards empty"><span>${tk(p)} У ${esc(p.name)} пока нет улиц</span></div>`;
     }
-    return `<div class="mycards">${owned
+    return `<div class="mycards" style="--pc:${p.color}">${owned
       .map((id) => {
         const c = BOARD[id];
         const own = game.state.cells[id];
+        const mono = c.group ? game.ownsGroup(me, c.group) : false;
         const color = c.group ? GROUP_COLORS[c.group] : '#9b97c4';
         const houses = own.houses === 5 ? '<i class="hotel"></i>' : '<i class="house"></i>'.repeat(own.houses);
         const label = c.short ?? c.name;
-        return `<button class="mcard ${own.mortgaged ? 'mortgaged' : ''}" data-cell="${id}" style="--gc:${color}">
+        return `<button class="mcard ${own.mortgaged ? 'mortgaged' : ''} ${mono ? 'mono' : ''}" data-cell="${id}" style="--gc:${color}">
           <span class="mbar"></span>
+          ${mono ? '<span class="mstar">★</span>' : ''}
           ${c.type === 'property' ? '' : `<span class="mico">${cellIcon(id)}</span>`}
           <span class="mname">${esc(label)}</span>
           ${houses ? `<span class="mhouses">${houses}</span>` : ''}
@@ -1085,7 +1087,7 @@ export class App {
   }
 
   private bar(p: { token: string; color: string } | null, title: string, sub: string, btns: string, wait = false): string {
-    return `<div class="who">${p ? `<div class="pedestal">${tk(p)}</div>` : ''}</div>
+    return `<div class="who">${p ? `<div class="pedestal" style="--pc:${p.color}">${tk(p)}</div>` : ''}</div>
       <div class="info"><div class="atitle">${title}</div><div class="asub ${wait ? 'wait' : ''}">${sub}</div></div>
       <div class="btns">${btns}</div>`;
   }
@@ -1221,26 +1223,67 @@ export class App {
     } else if (this.modal === 'trade' && this.draft) {
       body = this.tradeHtml(this.draft);
     } else if (this.modal === 'assets') {
-      const me = this.me();
-      const owned = game.ownedBy(me);
-      body = `<h3>Моё имущество</h3>
-        ${owned.length ? '' : '<p>Пока ничего нет. Покупайте улицы!</p>'}
-        <div class="asset-list">${owned
-          .map((id) => {
-            const c = BOARD[id];
-            const own = s.cells[id];
-            return `<button class="asset" data-cell="${id}">
-              <span class="sw" style="background:${c.group ? GROUP_COLORS[c.group] : '#777'}"></span>
-              <span class="an">${cellIcon(id, 'ico inline')} ${esc(c.name)}</span>
-              <span class="ah">${own.mortgaged ? 'залог' : own.houses === 5 ? '🏨' : '🏠'.repeat(own.houses)}</span>
-            </button>`;
-          })
-          .join('')}</div>
-        <button class="btn blue" data-act="close">Закрыть</button>`;
+      body = this.assetsHtml();
     } else if (this.modal.startsWith('cell:')) {
       body = this.cellCard(Number(this.modal.slice(5)));
     }
     return `<div class="overlay"><div class="modal">${body}</div></div>`;
+  }
+
+  /** «Моё имущество»: по цветовым группам, собранные монополии — первыми и выделены. */
+  private assetsHtml(): string {
+    const game = this.game!;
+    const s = game.state;
+    const me = this.me();
+    const p = game.player(me);
+    const owned = new Set(game.ownedBy(me));
+    const item = (id: number) => {
+      const c = BOARD[id];
+      const own = s.cells[id];
+      const status = own.mortgaged ? 'залог' : own.houses === 5 ? 'отель' : own.houses ? `${own.houses} ${own.houses === 1 ? 'дом' : 'дома'}` : '';
+      return `<button class="asset" data-cell="${id}">
+        <span class="sw" style="background:${c.group ? GROUP_COLORS[c.group] : '#9b97c4'}"></span>
+        <span class="an">${cellIcon(id, 'ico inline')} ${esc(c.name)}</span>
+        <span class="ah">${status}</span>
+      </button>`;
+    };
+    const groups = (Object.keys(GROUP_NAMES) as ColorGroup[])
+      .map((g) => {
+        const ids = groupCells(g);
+        const mine = ids.filter((id) => owned.has(id));
+        if (!mine.length) return null;
+        const mono = mine.length === ids.length;
+        const mortgaged = mono && ids.some((id) => s.cells[id].mortgaged);
+        const badge = mono
+          ? mortgaged
+            ? '<span class="gbadge warn">Монополия · выкупите залог, чтобы строить</span>'
+            : '<span class="gbadge ok">★ Монополия — можно строить</span>'
+          : `<span class="gbadge">${mine.length} из ${ids.length}</span>`;
+        return {
+          mono,
+          html: `<div class="agroup ${mono ? 'mono' : ''}">
+            <div class="ghead"><span class="gdot" style="background:${GROUP_COLORS[g]}"></span>${GROUP_NAMES[g][0].toUpperCase() + GROUP_NAMES[g].slice(1)} группа ${badge}</div>
+            ${mine.map(item).join('')}
+          </div>`,
+        };
+      })
+      .filter((x): x is { mono: boolean; html: string } => !!x)
+      .sort((a, b) => Number(b.mono) - Number(a.mono));
+    const others = [...owned].filter((id) => !BOARD[id].group);
+    const stations = others.filter((id) => BOARD[id].type === 'station');
+    const utils = others.filter((id) => BOARD[id].type === 'utility');
+    const extra = (title: string, ids: number[], total: number) =>
+      ids.length
+        ? `<div class="agroup"><div class="ghead">${title} <span class="gbadge">${ids.length} из ${total}</span></div>${ids.map(item).join('')}</div>`
+        : '';
+    return `<h3 style="--pc:${p.color}">${tk(p)} Имущество: ${esc(p.name)}</h3>
+      ${owned.size ? '' : '<p class="msg">Пока ничего нет. Покупайте улицы!</p>'}
+      <div class="asset-list">
+        ${groups.map((g) => g.html).join('')}
+        ${extra('Вокзалы', stations, 4)}
+        ${extra('Коммунальные службы', utils, 2)}
+      </div>
+      <button class="btn blue" data-act="close">Закрыть</button>`;
   }
 
   /** Входящее предложение обмена — целиком, с двумя колонками. */
