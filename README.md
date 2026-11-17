@@ -10,6 +10,7 @@ npm install
 npm run dev      # dev-сервер (откройте адрес Network на телефоне в той же Wi-Fi сети)
 npm test         # тесты движка
 npm run build    # сборка в dist/
+npm run build:artifact  # вся игра одним файлом: dist/moskva-magnat.html
 ```
 
 ## Этапы

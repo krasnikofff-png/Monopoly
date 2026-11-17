@@ -759,7 +759,11 @@ export class App {
         void this.act(me, { type: act } as Action);
         return;
       case 'bankrupt':
-        if (confirm('Объявить банкротство? Вы выбываете из игры.')) void this.act(me, { type: 'bankrupt' });
+        this.modal = 'bankrupt';
+        return this.render();
+      case 'bankruptYes':
+        this.modal = null;
+        void this.act(me, { type: 'bankrupt' });
         return;
       case 'build':
       case 'sellHouse':
@@ -1036,6 +1040,11 @@ export class App {
         .reverse()
         .map((l) => `<div>${esc(l)}</div>`)
         .join('')}</div><button class="btn blue" data-act="close">Закрыть</button>`;
+    } else if (this.modal === 'bankrupt') {
+      body = `<h3>Объявить банкротство?</h3>
+        <div class="msg">Всё имущество уйдёт кредитору, а вы выбудете из игры. Отменить это нельзя.</div>
+        <button class="btn red" data-act="bankruptYes">Да, я банкрот</button>
+        <button class="btn ghost" data-act="close">Отмена</button>`;
     } else if (this.modal === 'settings') {
       const tg = (on: boolean) => `<span class="toggle ${on ? 'on' : ''}"><i></i></span>`;
       body = `<h3>Настройки</h3>
