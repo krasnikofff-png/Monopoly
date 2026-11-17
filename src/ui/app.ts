@@ -8,6 +8,8 @@ import { confetti, floatText, flyCoins, shake, tweenNumber } from './fx';
 import { Game, GameError, PLAYER_COLORS, PLAYER_TOKENS, formatMoney } from '../engine/game';
 import type { Action, ColorGroup, GameEvent, GameState } from '../engine/types';
 
+type Notice = Extract<GameEvent, { kind: 'notice' }>;
+
 const SAVE_KEY = 'moskva-magnat-save-v1';
 const SETUP_KEY = 'moskva-magnat-setup-v1';
 
@@ -89,6 +91,9 @@ const UI_ICONS = {
   home: stroke('<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/>'),
   deal: stroke('<path d="m11 17 2 2a1.4 1.4 0 0 0 2-2"/><path d="m14 14 2.5 2.5a1.4 1.4 0 0 0 2-2l-3.9-3.9a2.1 2.1 0 0 0-3 0l-.9.9a1.4 1.4 0 0 1-2-2l2.8-2.8a4.2 4.2 0 0 1 5.2-.6l.5.3a2 2 0 0 0 1.5.2L21 6"/><path d="m21 3 1 11h-2"/><path d="M3 3 2 14l6.5 6.5a1.4 1.4 0 0 0 2-2"/><path d="M3 4h8"/>'),
   list: stroke('<rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/>'),
+  bank: stroke('<path d="M3 9.5 12 4l9 5.5"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8"/><path d="M3 20.5h18"/>'),
+  soundOn: stroke('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'),
+  soundOff: stroke('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>'),
 };
 
 /** Фон центра поля: условная карта Москвы — река, улицы, силуэты высоток. */
@@ -204,6 +209,11 @@ export class App {
   private prevCardId = -1;
   private prevModalKey: string | null = null;
   private prevCurrent = -1;
+  private prevHighlight = '';
+  /** Всплывающее окно-событие в центре поля. */
+  private notice: (Notice & { id: number; at: number }) | null = null;
+  private noticeSeq = 0;
+  private prevNoticeId = -1;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -450,7 +460,24 @@ export class App {
             await this.waitModalClosed();
           }
           break;
+        case 'notice':
+          this.showNotice(e);
+          await sleep(950);
+          break;
         case 'money':
+          if (e.delta < 0 && next?.kind === 'buy' && next.player === e.player) {
+            const cell = BOARD[next.cell];
+            this.showNotice({
+              kind: 'notice',
+              tone: 'info',
+              title: next.auction ? 'Аукцион' : 'Покупка',
+              text: `${game.player(e.player).name} покупает «${cell.name}»`,
+              amount: next.price,
+              from: e.player,
+              to: null,
+            });
+            await sleep(700);
+          }
           if (e.delta < 0 && next?.kind === 'money' && next.delta === -e.delta && next.player !== e.player) {
             await this.moneyFx(e.player, next.player, -e.delta);
             i++;
@@ -486,6 +513,7 @@ export class App {
           break;
         }
         case 'jail':
+          this.showNotice({ kind: 'notice', tone: 'bad', title: 'Тюрьма', text: `${game.player(e.player).name} отправляется в тюрьму`, cell: 10 });
           this.sfx('jail');
           this.vib([60, 40, 60]);
           shake(this.root.querySelector('.board'), 7);
@@ -494,13 +522,27 @@ export class App {
         case 'bankrupt':
           this.sfx('lose');
           shake(this.root.querySelector(`[data-chip="${e.player}"]`), 8);
-          this.showToast(`${game.player(e.player).name} — банкрот!`);
+          this.showNotice({ kind: 'notice', tone: 'bad', title: 'Банкротство', text: `${game.player(e.player).name} выбывает из игры` });
           await sleep(600);
           break;
         case 'trade': {
           const o = e.offer;
           this.sfx(e.accepted ? 'deal' : 'click');
-          this.showToast(`${game.player(o.to).name} ${e.accepted ? 'принимает ✅' : 'отклоняет ❌'} обмен`);
+          const names = (cells: number[], money: number) =>
+            [...cells.map((id) => BOARD[id].short ?? BOARD[id].name), money ? formatMoney(money) : ''].filter(Boolean).join(', ') || 'ничего';
+          if (e.accepted) {
+            this.showNotice({
+              kind: 'notice',
+              tone: 'info',
+              title: 'Сделка',
+              text: `${game.player(o.from).name} отдаёт: ${names(o.giveCells, o.giveMoney)}. ${game.player(o.to).name} отдаёт: ${names(o.getCells, o.getMoney)}.`,
+              from: o.from,
+              to: o.to,
+            });
+            await sleep(1200);
+          } else {
+            this.showToast(`${game.player(o.to).name} отклоняет обмен`);
+          }
           break;
         }
         case 'gameover': {
@@ -518,6 +560,11 @@ export class App {
         default:
           break;
       }
+    }
+    if (this.notice) {
+      const left = 2000 - (performance.now() - this.notice.at);
+      if (left > 0) await sleep(left);
+      this.notice = null;
     }
     // Страховка: показываем точные суммы после всех эффектов.
     game.state.players.forEach((p, i) => {
@@ -729,6 +776,9 @@ export class App {
       case 'settings':
         this.modal = 'settings';
         return this.render();
+      case 'dismissNotice':
+        this.notice = null;
+        return this.render();
       case 'toggleSound':
         this.prefs.sound = !this.prefs.sound;
         this.savePrefs();
@@ -798,7 +848,7 @@ export class App {
         <header class="hdr">
           <button class="hbtn" data-act="settings" aria-label="Меню">${UI_ICONS.menu}</button>
           <div class="logo hdr-logo"><span>МОСКВА</span><b>МАГНАТ</b></div>
-          <button class="hbtn" data-act="log" aria-label="История">${UI_ICONS.clock}</button>
+          <button class="hbtn" data-act="toggleSound" aria-label="Звук">${this.prefs.sound ? UI_ICONS.soundOn : UI_ICONS.soundOff}</button>
         </header>
         <div class="players">${s.players.map((p) => this.playerChip(p.id)).join('')}</div>
         <div class="board-wrap"><div class="board">${BOARD.map((c) => this.cellHtml(c.id)).join('')}
@@ -809,11 +859,13 @@ export class App {
               <div class="dice ${this.rolling ? 'rolling' : ''}">
                 <div class="die">${pips(this.diceShown[0])}</div><div class="die">${pips(this.diceShown[1])}</div>
               </div>
+              ${this.noticeHtml()}
               <div class="dice-sum ${sum && !this.rolling ? '' : 'empty'}">${sum && !this.rolling ? `Выпало ${sum}${s.dice![0] === s.dice![1] ? ' · дубль!' : ''}` : '&nbsp;'}</div>
             </div>
           </div>
         </div></div>
         <div class="action">${this.panelHtml()}</div>
+        ${this.myCardsHtml()}
         <nav class="nav">
           <button data-act="assets">${UI_ICONS.home}<span>Имущество</span></button>
           <button data-act="trade">${UI_ICONS.deal}<span>Сделки</span></button>
@@ -823,7 +875,11 @@ export class App {
         ${this.toast ? `<div class="toast">${esc(this.toast)}</div>` : ''}
       </div>`;
     if (modalEnter) this.root.querySelector('.overlay')?.classList.add('enter');
-    if (turnChanged) this.root.querySelector('.chip.active')?.classList.add('enter');
+    const hl = `${this.highlighted()}:${s.phase}`;
+    if (hl !== this.prevHighlight) {
+      this.prevHighlight = hl;
+      this.root.querySelector('.chip.active')?.classList.add('enter');
+    }
     this.root.querySelectorAll<HTMLElement>('[data-tok]').forEach((el) => {
       const a = prev.get(el.dataset.tok!);
       if (!a) return;
@@ -847,10 +903,13 @@ export class App {
   private playerChip(id: number): string {
     const game = this.game!;
     const p = game.player(id);
-    const active = game.state.current === id && game.state.phase !== 'gameover';
+    const s = game.state;
+    const active = this.highlighted() === id;
     const mine = active && !p.isBot && this.humanCount() <= 1;
-    return `<div class="chip ${active ? 'active' : ''} ${p.bankrupt ? 'out' : ''}" data-chip="${id}" style="--pc:${p.color}">
-      ${active ? `<span class="badge">${mine ? 'ВЫ · ХОД' : 'ХОД'}</span>` : ''}
+    const label = s.phase === 'auction' ? 'СТАВИТ' : s.phase === 'trade' ? 'ОБМЕН' : s.phase === 'debt' ? 'ДОЛГ' : 'ХОД';
+    const lead = s.phase === 'auction' && s.auction?.bidder === id ? `<span class="bidtag">ставка ${s.auction.bid.toLocaleString('ru-RU')}</span>` : '';
+    return `<div class="chip ${active ? 'active' : ''} ${p.bankrupt ? 'out' : ''} ${lead ? 'leader' : ''}" data-chip="${id}" style="--pc:${p.color}">
+      ${active ? `<span class="badge">${mine ? `ВЫ · ${label}` : label}</span>` : ''}${lead}
       <div class="chip-top"><span class="tok">${tk(p)}</span><span class="pn">${esc(p.name)}${p.inJail ? ' 🔒' : ''}</span></div>
       <span class="pm">${p.bankrupt ? 'банкрот' : (this.shownMoney[id] ?? p.money).toLocaleString('ru-RU')}</span>
     </div>`;
@@ -880,6 +939,72 @@ export class App {
       ${owner ? '<div class="owner-mark"></div>' : ''}
       <div class="tokens">${tokens}</div>
     </div>`;
+  }
+
+  /** Кого подсвечивать в панели игроков: того, от кого сейчас ждут действия. */
+  private highlighted(): number {
+    const s = this.game!.state;
+    if (s.phase === 'gameover') return -1;
+    return s.phase === 'auction' || s.phase === 'trade' || s.phase === 'debt' ? this.game!.actor() : s.current;
+  }
+
+  private showNotice(n: Notice): void {
+    this.notice = { ...n, id: ++this.noticeSeq, at: performance.now() };
+    this.sfx(n.tone === 'bad' ? 'lose' : n.tone === 'gain' ? 'turn' : 'click');
+    this.render();
+  }
+
+  private noticeHtml(): string {
+    const n = this.notice;
+    if (!n || !this.game) return '';
+    const enter = n.id !== this.prevNoticeId;
+    this.prevNoticeId = n.id;
+    const game = this.game;
+    const who = (id: number | null | undefined) =>
+      id === undefined
+        ? ''
+        : id === null
+          ? `<span class="nwho bank">${UI_ICONS.bank}<b>Банк</b></span>`
+          : `<span class="nwho">${tk(game.player(id))}<b>${esc(game.player(id).name)}</b></span>`;
+    const flow =
+      n.from !== undefined || n.to !== undefined
+        ? `<div class="nflow">${who(n.from)}${n.from !== undefined && n.to !== undefined ? '<i>→</i>' : ''}${who(n.to)}</div>`
+        : '';
+    const cell = n.cell !== undefined && isOwnable(BOARD[n.cell]) ? `<div class="ncell">за «${esc(BOARD[n.cell].name)}»</div>` : '';
+    return `<div class="notice tone-${n.tone} ${enter ? 'enter' : ''}" data-act="dismissNotice">
+      <span class="npill">${esc(n.title)}</span>
+      ${flow}
+      <div class="ntext">${esc(n.text)}</div>
+      ${n.amount ? `<div class="namount">${formatMoney(n.amount)}</div>` : ''}
+      ${cell}
+    </div>`;
+  }
+
+  /** Лента карточек улиц игрока внизу экрана. */
+  private myCardsHtml(): string {
+    const game = this.game!;
+    const me = this.me();
+    if (me < 0) return '';
+    const p = game.player(me);
+    const owned = game.ownedBy(me);
+    if (!owned.length) {
+      return `<div class="mycards empty"><span>${tk(p)} У ${esc(p.name)} пока нет улиц</span></div>`;
+    }
+    return `<div class="mycards">${owned
+      .map((id) => {
+        const c = BOARD[id];
+        const own = game.state.cells[id];
+        const color = c.group ? GROUP_COLORS[c.group] : '#9b97c4';
+        const houses = own.houses === 5 ? '<i class="hotel"></i>' : '<i class="house"></i>'.repeat(own.houses);
+        const label = CELL_LABELS[id] ?? c.short ?? c.name;
+        return `<button class="mcard ${own.mortgaged ? 'mortgaged' : ''}" data-cell="${id}" style="--gc:${color}">
+          <span class="mbar">${houses}</span>
+          ${c.type === 'property' ? '' : `<span class="mico">${cellIcon(id)}</span>`}
+          <span class="mname">${esc(label)}</span>
+          <span class="mprice">${own.mortgaged ? 'залог' : `${game.rentFor(id, 7).toLocaleString('ru-RU')} ₽`}</span>
+        </button>`;
+      })
+      .join('')}</div>`;
   }
 
   /** Большая карточка клетки, на которой стоит текущий игрок. */
@@ -949,8 +1074,8 @@ export class App {
       const a = s.auction;
       const cell = BOARD[a.cell];
       const leader = a.bidder !== null ? esc(game.player(a.bidder).name) : 'нет';
-      const title = `Аукцион: ${esc(cell.short ?? cell.name)}`;
-      const sub = `Ставка <b>${formatMoney(a.bid)}</b> · лидер: ${leader}`;
+      const title = actor === me ? `Ваша ставка, ${esc(p.name)}` : `Аукцион: ${esc(cell.short ?? cell.name)}`;
+      const sub = `${actor === me ? `«${esc(cell.name)}», цена ${formatMoney(cell.price!)}. ` : ''}Ставка <b>${formatMoney(a.bid)}</b> · лидер: ${leader}`;
       if (actor !== me) return this.bar(game.player(actor), title, `${sub}<br>${esc(game.player(actor).name)} думает…`, '', true);
       return this.bar(
         p,

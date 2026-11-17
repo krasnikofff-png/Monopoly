@@ -264,6 +264,7 @@ export class Game {
           return;
         }
         this.log(`${p.name}: третья попытка не удалась — штраф ${formatMoney(JAIL_FINE)}.`);
+        this.emit({ kind: 'notice', tone: 'pay', title: 'Штраф', text: `${p.name} платит за выход из тюрьмы`, amount: JAIL_FINE, cell: 10, from: p.id, to: null });
         p.inJail = false;
         p.jailTurns = 0;
         this.charge(p.id, null, JAIL_FINE);
@@ -360,6 +361,7 @@ export class Game {
 
   private passStart(playerId: number): void {
     const p = this.player(playerId);
+    this.emit({ kind: 'notice', tone: 'gain', title: 'Старт', text: `${p.name} проходит Старт`, amount: START_BONUS, cell: 0, from: null, to: playerId });
     this.addMoney(playerId, START_BONUS);
     this.log(`${p.name} проходит Старт и получает ${formatMoney(START_BONUS)}.`);
   }
@@ -399,12 +401,23 @@ export class Game {
       }
       if (own.mortgaged) {
         this.log(`«${cell.name}» в залоге — аренда не взимается.`);
+        this.emit({ kind: 'notice', tone: 'info', title: 'В залоге', text: `«${cell.name}» в залоге — аренда не платится`, cell: cell.id });
         return;
       }
       const sum = s.dice ? s.dice[0] + s.dice[1] : 7;
       const rent = this.rentFor(cell.id, sum, special);
       const owner = this.player(own.owner);
       this.log(`Аренда за «${cell.name}»: ${p.name} → ${owner.name}, ${formatMoney(rent)}.`);
+      this.emit({
+        kind: 'notice',
+        tone: 'pay',
+        title: 'Аренда',
+        text: `${p.name} платит ${owner.name}`,
+        amount: rent,
+        cell: cell.id,
+        from: playerId,
+        to: own.owner,
+      });
       this.charge(playerId, own.owner, rent);
       return;
     }
@@ -412,6 +425,7 @@ export class Game {
     switch (cell.type) {
       case 'tax':
         this.log(`${p.name} платит «${cell.name}»: ${formatMoney(cell.amount!)}.`);
+        this.emit({ kind: 'notice', tone: 'pay', title: cell.name, text: `${p.name} платит банку`, amount: cell.amount, cell: cell.id, from: playerId, to: null });
         this.charge(playerId, null, cell.amount!);
         return;
       case 'gotojail':
@@ -531,6 +545,15 @@ export class Game {
     }
     this.debts.push({ debtor, creditor, amount });
     this.log(`${p.name} не хватает денег: долг ${formatMoney(amount)}.`);
+    this.emit({
+      kind: 'notice',
+      tone: 'bad',
+      title: 'Не хватает денег',
+      text: `Долг: ${p.name} → ${creditor === null ? 'банк' : this.player(creditor).name}`,
+      amount,
+      from: debtor,
+      to: creditor,
+    });
   }
 
   private payDebt(): void {
@@ -669,7 +692,7 @@ export class Game {
     if (p.money < cell.price!) throw new GameError('Недостаточно денег');
     this.addMoney(p.id, -cell.price!);
     s.cells[cell.id].owner = p.id;
-    this.emit({ kind: 'buy', player: p.id, cell: cell.id });
+    this.emit({ kind: 'buy', player: p.id, cell: cell.id, price: cell.price!, auction: false });
     this.log(`${p.name} покупает «${cell.name}» за ${formatMoney(cell.price!)}.`);
     s.phase = 'end'; // временно, finishAction вычислит правильно
     this.finishAction();
@@ -722,10 +745,11 @@ export class Game {
       if (a.bidder !== null) {
         this.addMoney(a.bidder, -a.bid);
         s.cells[a.cell].owner = a.bidder;
-        this.emit({ kind: 'buy', player: a.bidder, cell: a.cell });
+        this.emit({ kind: 'buy', player: a.bidder, cell: a.cell, price: a.bid, auction: true });
         this.log(`${this.player(a.bidder).name} выигрывает аукцион: «${cell.name}» за ${formatMoney(a.bid)}.`);
       } else {
         this.log(`Никто не купил «${cell.name}».`);
+        this.emit({ kind: 'notice', tone: 'info', title: 'Аукцион', text: `Никто не купил «${cell.name}»`, cell: a.cell });
       }
       s.auction = null;
       s.phase = 'end';

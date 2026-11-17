@@ -174,7 +174,18 @@ export type GameEvent =
   | { kind: 'money'; player: number; delta: number }
   | { kind: 'card'; card: string }
   | { kind: 'jail'; player: number }
-  | { kind: 'buy'; player: number; cell: number }
+  | { kind: 'buy'; player: number; cell: number; price: number; auction: boolean }
+  | {
+      kind: 'notice';
+      /** pay — кто-то платит, gain — получает, bad — неприятность, info — просто событие */
+      tone: 'pay' | 'gain' | 'bad' | 'info';
+      title: string;
+      text: string;
+      amount?: number;
+      cell?: number;
+      from?: number | null;
+      to?: number | null;
+    }
   | { kind: 'build'; cell: number; houses: number }
   | { kind: 'trade'; offer: TradeOffer; accepted: boolean }
   | { kind: 'bankrupt'; player: number }
