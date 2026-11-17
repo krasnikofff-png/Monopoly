@@ -210,6 +210,13 @@ export class GameStore {
     this.verified.delete(id);
   }
 
+  /** Партия, загруженная по коду: она считается самой свежей версией этой записи. */
+  adopt(id: string, state: GameState): void {
+    const rev = Math.max(Date.now(), (this.revs.get(id) ?? 0) + 1);
+    this.opened(id, state, rev);
+    this.verified.add(id);
+  }
+
   revOf(id: string): number {
     return this.revs.get(id) ?? 0;
   }
