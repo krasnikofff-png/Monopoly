@@ -256,7 +256,10 @@ export class App {
   private noticeResolve: (() => void) | null = null;
   private prevNoticeId = -1;
 
-  constructor(root: HTMLElement, resume?: { state?: GameState; gameId?: string; rev?: number } | null) {
+  constructor(
+    root: HTMLElement,
+    resume?: { state?: GameState; gameId?: string; rev?: number; undo?: { state: GameState; player: number } } | null,
+  ) {
     this.root = root;
     installIcons();
     this.setup = this.loadSetup();
@@ -278,6 +281,7 @@ export class App {
       const id = resume?.gameId ?? newGameId();
       this.store.opened(id, hot, resume?.rev ?? 0);
       this.startGame(new Game(hot), id);
+      if (resume?.undo && resume.undo.player === hot.current) this.undo = resume.undo;
       this.save();
     } else {
       this.renderMenu();
@@ -286,10 +290,10 @@ export class App {
   }
 
   /** Текущая партия — для передачи в новую версию страницы при обновлении. */
-  snapshot(): { state?: GameState; gameId?: string; rev?: number } {
+  snapshot(): { state?: GameState; gameId?: string; rev?: number; undo?: { state: GameState; player: number } } {
     this.store.flush();
     if (!this.game || this.game.state.phase === 'gameover' || !this.gameId) return {};
-    return { state: this.game.state, gameId: this.gameId, rev: this.store.revOf(this.gameId) };
+    return { state: this.game.state, gameId: this.gameId, rev: this.store.revOf(this.gameId), undo: this.undo ?? undefined };
   }
 
   private async refreshGames(): Promise<void> {
@@ -436,7 +440,7 @@ export class App {
   /** Сохраняет текущую партию (браузер — сразу, облако — пакетом). */
   private save(): void {
     if (!this.game || !this.gameId) return;
-    this.store.save(this.gameId, this.game.state);
+    this.store.save(this.gameId, this.game.state, this.undo);
   }
 
   private importHtml(): string {
@@ -967,6 +971,8 @@ export class App {
           if (!r) return this.showMenuToast('Не удалось открыть партию. Проверьте интернет и попробуйте ещё раз.');
           this.store.opened(gid, r.state, r.rev);
           this.startGame(new Game(r.state), gid);
+          this.undo = r.undo;
+          this.render();
           if (r.cloudUnchecked) this.showToast('⚠ Облако не ответило — открыта версия с этого телефона');
         });
         return;

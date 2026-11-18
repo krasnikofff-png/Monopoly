@@ -4,7 +4,7 @@ import type { GameState } from './engine/types';
 
 // При обновлении опубликованной страницы claude.ai передаёт новой версии снимок
 // текущей партии — так игра продолжается без перезапуска.
-type Snapshot = { state?: GameState; gameId?: string; rev?: number };
+type Snapshot = { state?: GameState; gameId?: string; rev?: number; undo?: { state: GameState; player: number } };
 type Hot = {
   data?: Snapshot;
   ready?: (start: (data: Snapshot) => void) => void;

@@ -62,6 +62,7 @@ export interface TurnSnap {
 export interface LoadResult {
   state: GameState;
   rev: number;
+  undo: UndoInfo | null;
   /** Облако не ответило — открыта версия с этого устройства. */
   cloudUnchecked: boolean;
 }
@@ -77,6 +78,14 @@ interface StoredLocal {
   json: string;
   savedAt: string;
   rev: number;
+  /** Состояние до последнего броска текущего игрока (для «Перебросить»). */
+  undo?: string;
+}
+
+/** Состояние до броска: кто бросал и как всё было. */
+export interface UndoInfo {
+  state: GameState;
+  player: number;
 }
 
 interface QueueItem {
@@ -223,12 +232,13 @@ export class GameStore {
 
   // ——————————————— Запись ———————————————
 
-  save(id: string, state: GameState): void {
+  save(id: string, state: GameState, undo: UndoInfo | null = null): void {
     if (this.blocked.has(id)) return;
     const now = new Date().toISOString();
     const rev = (this.revs.get(id) ?? 0) + 1;
     this.revs.set(id, rev);
     const json = JSON.stringify(state);
+    const undoJson = undo ? JSON.stringify({ player: undo.player, state: { ...undo.state, log: undo.state.log.slice(-20) } }) : '';
     const meta = {
       savedAt: now,
       rev,
@@ -238,13 +248,13 @@ export class GameStore {
     };
 
     // 1. Память браузера — сразу.
-    lsSet(gameKey(id), JSON.stringify({ json, savedAt: now, rev } satisfies StoredLocal));
+    lsSet(gameKey(id), JSON.stringify({ json, savedAt: now, rev, undo: undoJson } satisfies StoredLocal));
     const index = this.localIndex().filter((m) => m.id !== id);
     index.unshift({ id, ...meta, where: 'local' });
     lsSet(INDEX_KEY, JSON.stringify(index.slice(0, 60)));
 
     // 2. Облако — пакетом (если пришло новее до записи — пишется только новое).
-    this.queue.set(`games/${id}`, { op: 'set', data: { ...meta, json }, gameId: id });
+    this.queue.set(`games/${id}`, { op: 'set', data: { ...meta, json, undo: undoJson }, gameId: id });
     if (this.lastTurn.get(id) !== state.turnNumber) {
       this.lastTurn.set(id, state.turnNumber);
       const snap = compact(state);
@@ -433,7 +443,9 @@ export class GameStore {
           if (r === TIMEOUT) continue;
           cloudUnchecked = false;
           const d = r.exists ? r.data() : undefined;
-          if (d && typeof d.json === 'string') cloud = { json: d.json, savedAt: String(d.savedAt ?? ''), rev: Number(d.rev ?? 0) };
+          if (d && typeof d.json === 'string') {
+            cloud = { json: d.json, savedAt: String(d.savedAt ?? ''), rev: Number(d.rev ?? 0), undo: typeof d.undo === 'string' ? d.undo : '' };
+          }
         } catch {
           /* следующая попытка */
         }
@@ -445,7 +457,18 @@ export class GameStore {
     const best = a && b ? newer(a, b) : (a ?? b);
     const state = best ? parseState(best.json) : null;
     if (!state || !best) return null;
-    return { state, rev: best.rev, cloudUnchecked };
+    let undo: UndoInfo | null = null;
+    try {
+      if (best.undo) {
+        const u = JSON.parse(best.undo) as { player: number; state: GameState };
+        const us = parseState(JSON.stringify(u.state));
+        // Годится, только если это ход того же игрока, что и сейчас.
+        if (us && u.player === state.current && us.current === state.current) undo = { player: u.player, state: us };
+      }
+    } catch {
+      /* без возможности перебросить */
+    }
+    return { state, rev: best.rev, cloudUnchecked, undo };
   }
 
   /** Снимки начала ходов партии — для отката. Новые сверху; не новее текущего хода. */
