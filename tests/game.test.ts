@@ -296,6 +296,18 @@ describe('Игровой движок', () => {
     }
   });
 
+  it('старое сохранение с удалённой карточкой «Ремонт дороги» загружается и играется', () => {
+    const g = twoPlayers();
+    const st = structuredClone(g.state);
+    st.decks.surprise.order = ['s13', ...st.decks.surprise.order];
+    st.decks.surprise.index = 0;
+    const g2 = new Game(st);
+    expect(g2.state.decks.surprise.order).not.toContain('s13');
+    g2.state.players[0].position = 0;
+    forceDice(g2, 1, 1); // клетка 2 — «Сюрприз»
+    expect(() => g2.dispatch(0, { type: 'roll' })).not.toThrow();
+  });
+
   it('боты доигрывают партию до конца без ошибок', () => {
     for (let seed = 1; seed <= 30; seed++) {
       const g = Game.create(

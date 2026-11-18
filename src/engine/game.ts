@@ -49,6 +49,13 @@ export class Game {
 
   constructor(state: GameState) {
     this.state = state;
+    // Сохранения старых версий могут содержать карточки, которых больше нет в колодах.
+    for (const deck of Object.values(state.decks)) {
+      const before = deck.order.slice(0, deck.index).filter((id) => CARD_BY_ID[id]).length;
+      deck.order = deck.order.filter((id) => CARD_BY_ID[id]);
+      deck.held = deck.held.filter((id) => CARD_BY_ID[id]);
+      deck.index = Math.min(before, deck.order.length);
+    }
   }
 
   static create(setups: PlayerSetup[], seed: number = randomSeed()): Game {

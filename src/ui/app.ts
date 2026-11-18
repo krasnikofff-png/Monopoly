@@ -3,6 +3,7 @@ import { CARD_BY_ID } from '../data/cards';
 import { botDecide, tradeGain } from '../engine/bot';
 import { iconSvg, installIcons } from './icons';
 import { normalizeToken, tokenSvg } from './tokens';
+import { randomSeed } from '../engine/rng';
 import { Sound, type SoundName } from './sound';
 import { GameStore, TURN_SLOTS, exportCode, importCode, newGameId, type GameMeta, type TurnSnap } from './store';
 import { confetti, floatText, flyCoins, shake, tweenNumber } from './fx';
@@ -237,6 +238,8 @@ export class App {
   private busyText = '';
   /** Карточку клетки открыли из «Имущества» — «Закрыть» вернёт туда. */
   private returnToAssets = false;
+  /** Состояние партии до последнего броска текущего игрока — для «Перебросить». */
+  private undo: { state: GameState; player: number } | null = null;
   /** Режим ручной правки владельцев клеток. */
   private editOwners = false;
   private prefs = { sound: true, vibrate: true };
@@ -410,6 +413,7 @@ export class App {
     // Прерываем анимации прошлой партии: отпускаем ожидающие окна, сбрасываем «ход идёт».
     this.gen++;
     this.busy = false;
+    this.undo = null;
     const pending = [this.noticeResolve, this.modalResolve];
     this.notice = null;
     this.noticeResolve = null;
@@ -536,8 +540,11 @@ export class App {
   private async act(playerId: number, action: Action): Promise<void> {
     const game = this.game!;
     if (this.busy) return;
+    const before = action.type === 'roll' && !game.player(playerId).isBot ? structuredClone(game.state) : null;
     try {
       game.dispatch(playerId, action);
+      if (before) this.undo = { state: before, player: playerId };
+      if (action.type === 'endTurn' || game.state.phase === 'gameover') this.undo = null;
     } catch (e) {
       if (e instanceof GameError) {
         this.showToast(e.message);
@@ -1108,6 +1115,21 @@ export class App {
       case 'rejectTrade':
         void this.act(me, { type: act } as Action);
         return;
+      case 'undoRoll': {
+        const u = this.undo;
+        if (!u || !this.game || !this.gameId || this.busy) return;
+        const st = structuredClone(u.state);
+        st.rngState = randomSeed(); // новый бросок, а не повтор того же
+        st.log.push(`${st.players[u.player].name} отменяет бросок и бросает заново.`);
+        const holder = this.holder;
+        this.store.opened(this.gameId, st, this.store.revOf(this.gameId));
+        this.startGame(new Game(st), this.gameId);
+        this.holder = holder;
+        this.save();
+        this.render();
+        this.showToast('↩ Ход возвращён — бросайте заново');
+        return;
+      }
       case 'payJail':
         this.modal = 'payJailConfirm';
         return this.render();
@@ -1420,6 +1442,13 @@ export class App {
     </div>`;
   }
 
+  /** Кнопка «Перебросить» — если текущий игрок уже бросал в этом ходу. */
+  private undoBtn(): string {
+    const s = this.game!.state;
+    if (!this.undo || this.busy || this.undo.player !== s.current || this.game!.actor() !== this.me()) return '';
+    return `<button class="btn ghost undo" data-act="undoRoll">↩ Перебросить</button>`;
+  }
+
   private bar(p: { token: string; color: string } | null, title: string, sub: string, btns: string, wait = false): string {
     return `<div class="who">${p ? `<div class="pedestal" style="--pc:${p.color}">${tk(p)}</div>` : ''}</div>
       <div class="info"><div class="atitle">${title}</div><div class="asub ${wait ? 'wait' : ''}">${sub}</div></div>
@@ -1488,7 +1517,7 @@ export class App {
              <button class="btn yellow" data-act="payJail" ${p.money < JAIL_FINE ? 'disabled' : ''}>Штраф ${formatMoney(JAIL_FINE)}</button>`,
           );
         }
-        return this.bar(p, title, s.extraRoll ? 'Дубль! Бросайте ещё раз.' : 'Бросьте кубики, чтобы сделать ход.', `<button class="btn green big" data-act="roll">Бросить кубики</button>`);
+        return this.bar(p, title, s.extraRoll ? 'Дубль! Бросайте ещё раз.' : 'Бросьте кубики, чтобы сделать ход.', `<button class="btn green big" data-act="roll">Бросить кубики</button>${this.undoBtn()}`);
       case 'buy': {
         const cell = BOARD[p.position];
         const enough = p.money >= cell.price!;
@@ -1497,7 +1526,7 @@ export class App {
           title,
           enough ? 'Участок свободен — можно купить.' : 'Не хватает денег — заложите улицы в «Имуществе» или пропустите (будет аукцион).',
           `<button class="btn green" data-act="buy" ${enough ? '' : 'disabled'}>Купить за ${formatMoney(cell.price!)}</button>
-           <button class="btn yellow" data-act="decline">Пропустить</button>`,
+           <button class="btn yellow" data-act="decline">Пропустить</button>${this.undoBtn()}`,
         );
       }
       case 'debt': {
@@ -1511,11 +1540,11 @@ export class App {
               : `Даже продав всё, наберётся только ${formatMoney(game.liquidationValue(p.id))} — придётся объявить банкротство.`
           }`,
           `<button class="btn green" data-act="payDebt" ${p.money < d.amount ? 'disabled' : ''}>Оплатить</button>
-           <button class="btn red" data-act="bankrupt">Банкрот</button>`,
+           <button class="btn red" data-act="bankrupt">Банкрот</button>${this.undoBtn()}`,
         );
       }
       case 'end':
-        return this.bar(p, title, last, `<button class="btn green big" data-act="endTurn">Завершить ход</button>`);
+        return this.bar(p, title, last, `<button class="btn green big" data-act="endTurn">Завершить ход</button>${this.undoBtn()}`);
       default:
         return '';
     }

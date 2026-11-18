@@ -30,7 +30,6 @@ export const CARDS: Card[] = [
   { id: 's10', deck: 'surprise', text: 'Оплата больничного: −1000.', effect: { kind: 'money', amount: -1000 } },
   { id: 's11', deck: 'surprise', text: 'Оплата обучения: −500.', effect: { kind: 'money', amount: -500 } },
   { id: 's12', deck: 'surprise', text: 'Гонорар за консультацию: +250.', effect: { kind: 'money', amount: 250 } },
-  { id: 's13', deck: 'surprise', text: 'Ремонт дороги у дома: 400 за каждый дом и 1150 за каждый отель.', effect: { kind: 'repairs', perHouse: 400, perHotel: 1150 } },
   { id: 's14', deck: 'surprise', text: 'Выиграл второе место в конкурсе красоты: +100.', effect: { kind: 'money', amount: 100 } },
   { id: 's15', deck: 'surprise', text: 'Наследство от тёти из Саратова: +1000.', effect: { kind: 'money', amount: 1000 } },
 ];
