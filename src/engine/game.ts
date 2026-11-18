@@ -257,7 +257,8 @@ export class Game {
       if (isDouble) {
         p.inJail = false;
         p.jailTurns = 0;
-        this.log(`${p.name} выходит из тюрьмы благодаря дублю.`);
+        this.log(`${p.name} выходит из тюрьмы благодаря дублю — без штрафа.`);
+        this.emit({ kind: 'notice', tone: 'gain', title: 'Дубль!', text: `${p.name} выходит из тюрьмы без штрафа`, cell: 10 });
       } else {
         p.jailTurns++;
         if (p.jailTurns < 3) {
@@ -689,10 +690,20 @@ export class Game {
     const p = this.player(s.current);
     if (s.phase !== 'roll' || !p.inJail) throw new GameError('Вы не в тюрьме');
     if (p.money < JAIL_FINE) throw new GameError('Недостаточно денег');
+    this.emit({
+      kind: 'notice',
+      tone: 'pay',
+      title: 'Штраф',
+      text: `${p.name} платит, чтобы выйти из тюрьмы до броска. Теперь бросок обычный.`,
+      amount: JAIL_FINE,
+      cell: 10,
+      from: p.id,
+      to: null,
+    });
     this.addMoney(p.id, -JAIL_FINE);
     p.inJail = false;
     p.jailTurns = 0;
-    this.log(`${p.name} платит ${formatMoney(JAIL_FINE)} и выходит из тюрьмы.`);
+    this.log(`${p.name} платит ${formatMoney(JAIL_FINE)} и выходит из тюрьмы до броска.`);
   }
 
   private useJailCard(): void {

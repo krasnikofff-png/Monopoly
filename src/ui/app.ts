@@ -1101,12 +1101,19 @@ export class App {
       case 'decline':
       case 'pass':
       case 'endTurn':
-      case 'payJail':
+
       case 'useJailCard':
       case 'payDebt':
       case 'acceptTrade':
       case 'rejectTrade':
         void this.act(me, { type: act } as Action);
+        return;
+      case 'payJail':
+        this.modal = 'payJailConfirm';
+        return this.render();
+      case 'payJailYes':
+        this.modal = null;
+        void this.act(me, { type: 'payJail' });
         return;
       case 'bankrupt':
         this.modal = 'bankrupt';
@@ -1536,6 +1543,11 @@ export class App {
         .reverse()
         .map((l) => `<div>${esc(l)}</div>`)
         .join('')}</div><button class="btn blue" data-act="close">Закрыть</button>`;
+    } else if (this.modal === 'payJailConfirm') {
+      body = `<h3>Заплатить штраф ${formatMoney(JAIL_FINE)}?</h3>
+        <div class="msg">Можно бесплатно попробовать выбросить дубль — у вас попытка ${(this.game?.player(this.me()).jailTurns ?? 0) + 1} из 3. Штраф платят, если не хотят ждать.</div>
+        <button class="btn green" data-act="close">Лучше попробую дубль</button>
+        <button class="btn yellow" data-act="payJailYes">Заплатить ${formatMoney(JAIL_FINE)} и выйти</button>`;
     } else if (this.modal === 'bankrupt') {
       body = `<h3>Объявить банкротство?</h3>
         <div class="msg">Всё имущество уйдёт кредитору, а вы выбудете из игры. Отменить это нельзя.</div>

@@ -279,6 +279,23 @@ describe('Игровой движок', () => {
     expect(g.state.players[0].money).toBe(START_MONEY - 250 + 300);
   });
 
+  it('дубль в тюрьме выпускает без штрафа на любой попытке', () => {
+    for (const turns of [0, 1, 2]) {
+      for (let d = 1; d <= 6; d++) {
+        const g = twoPlayers(11);
+        const p = g.state.players[0];
+        p.inJail = true;
+        p.position = 10;
+        p.jailTurns = turns;
+        forceDice(g, d, d);
+        g.dispatch(0, { type: 'roll' });
+        expect(p.inJail).toBe(false);
+        const fined = g.drainEvents().some((e) => e.kind === 'notice' && e.title === 'Штраф');
+        expect(fined).toBe(false);
+      }
+    }
+  });
+
   it('боты доигрывают партию до конца без ошибок', () => {
     for (let seed = 1; seed <= 30; seed++) {
       const g = Game.create(
