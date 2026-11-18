@@ -205,7 +205,9 @@ export class GameStore {
   private async getDb(ms = USE_TIMEOUT_MS): Promise<Db | null> {
     if (this.db || this.noCloud) return this.db;
     const r = await timeout(this.dbPromise, ms);
-    return r === TIMEOUT ? null : r;
+    if (r === TIMEOUT) return null;
+    if (!r) this.noCloud = true; // облака здесь нет совсем (страница открыта вне claude.ai)
+    return r;
   }
 
   // ——————————————— Партии в этом сеансе ———————————————
@@ -382,8 +384,8 @@ export class GameStore {
   async listGames(): Promise<{ games: GameMeta[]; cloudOk: boolean }> {
     const byId = new Map<string, GameMeta>();
     for (const m of this.localIndex()) byId.set(m.id, { ...m, where: 'local' });
-    let cloudOk = this.noCloud;
     const db = await this.getDb();
+    let cloudOk = this.noCloud;
     if (db) {
       try {
         const r = await timeout(db.collection('games').get(), READ_TIMEOUT_MS);

@@ -2,7 +2,7 @@ import { BOARD, GROUP_COLORS, JAIL_FINE, MAX_HOTELS, MAX_HOUSES, START_BONUS, ST
 import { CARD_BY_ID } from '../data/cards';
 import { botDecide, tradeGain } from '../engine/bot';
 import { iconSvg, installIcons } from './icons';
-import { normalizeToken, tokenSvg } from './tokens';
+import { TOKEN_NAMES, normalizeToken, tokenSvg } from './tokens';
 import { randomSeed } from '../engine/rng';
 import { Sound, type SoundName } from './sound';
 import { GameStore, TURN_SLOTS, exportCode, importCode, newGameId, type GameMeta, type TurnSnap } from './store';
@@ -18,6 +18,8 @@ const SETUP_KEY = 'moskva-magnat-setup-v1';
 interface SetupRow {
   name: string;
   isBot: boolean;
+  /** Выбранная фишка (car, hat, dog…). */
+  token?: string;
 }
 
 /** Черновик предложения обмена, который собирает игрок. */
@@ -352,16 +354,33 @@ export class App {
     try {
       const raw = localStorage.getItem(SETUP_KEY);
       const rows = raw ? (JSON.parse(raw) as SetupRow[]) : null;
-      if (rows && rows.length >= 2 && rows.length <= 6) return rows;
+      if (rows && rows.length >= 2 && rows.length <= 6) return this.fixTokens(rows);
     } catch {
       /* настройки по умолчанию */
     }
-    return [
+    return this.fixTokens([
       { name: 'Игрок', isBot: false },
       { name: 'Олег', isBot: true },
       { name: 'Марина', isBot: true },
       { name: 'Тимур', isBot: true },
-    ];
+    ]);
+  }
+
+  /** У каждого игрока своя фишка: пустые и повторы заменяются свободными. */
+  private fixTokens(rows: SetupRow[]): SetupRow[] {
+    const used = new Set<string>();
+    for (const r of rows) {
+      const t = r.token ? normalizeToken(r.token) : '';
+      r.token = t && !used.has(t) ? t : '';
+      if (r.token) used.add(r.token);
+    }
+    for (const r of rows) {
+      if (!r.token) {
+        r.token = PLAYER_TOKENS.find((t) => !used.has(t))!;
+        used.add(r.token);
+      }
+    }
+    return rows;
   }
 
   private renderMenu(): void {
@@ -377,7 +396,7 @@ export class App {
             ${rows
               .map(
                 (r, i) => `<div class="setup-row" style="--pc:${PLAYER_COLORS[i]}">
-                <span class="tok">${tokenSvg(PLAYER_TOKENS[i], PLAYER_COLORS[i])}</span>
+                <button class="tok tokpick" data-act="pickToken" data-id="${i}" aria-label="Выбрать фишку">${tokenSvg(r.token ?? PLAYER_TOKENS[i], PLAYER_COLORS[i])}<i>▾</i></button>
                 <input data-name="${i}" maxlength="12" value="${esc(r.name)}" />
                 <button class="kind ${r.isBot ? 'bot' : 'human'}" data-act="toggleKind" data-id="${i}">${r.isBot ? '🤖 Бот' : '🙂 Человек'}</button>
                 <button class="del" data-act="removePlayer" data-id="${i}" ${rows.length <= 2 ? 'disabled' : ''}>✕</button>
@@ -409,14 +428,19 @@ export class App {
   private startNew(): void {
     const rows = this.setup.map((r, i) => ({ ...r, name: r.name.trim().slice(0, 12) || `Игрок ${i + 1}` }));
     if (!rows.some((r) => !r.isBot)) return;
-    this.setup = rows;
+    this.setup = this.fixTokens(rows);
     this.saveSetup();
-    this.startGame(
-      Game.create(rows.map((r, i) => ({ name: r.name, isBot: r.isBot, color: PLAYER_COLORS[i], token: PLAYER_TOKENS[i] }))),
-      newGameId(),
-    );
+    // Жеребьёвка: порядок ходов случайный, у каждого свои фишка и цвет.
+    const people = rows.map((r, i) => ({ name: r.name, isBot: r.isBot, color: PLAYER_COLORS[i], token: r.token! }));
+    for (let i = people.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [people[i], people[j]] = [people[j], people[i]];
+    }
+    this.startGame(Game.create(people), newGameId());
     this.store.opened(this.gameId!, this.game!.state, 0);
     this.save();
+    this.modal = 'order';
+    this.render();
   }
 
   private startGame(game: Game, id: string): void {
@@ -465,7 +489,19 @@ export class App {
     if (!this.modal) return '';
     let body = '';
     if (this.modal === 'import') body = this.importHtml();
-    else if (this.modal.startsWith('hide:')) {
+    else if (this.modal.startsWith('token:')) {
+      const row = Number(this.modal.slice(6));
+      body = `<h3>Фишка для «${esc(this.setup[row]?.name || 'игрока')}»</h3>
+        <div class="tokgrid">${PLAYER_TOKENS.map((t) => {
+          const owner = this.setup.findIndex((r) => r.token === t);
+          const mine = owner === row;
+          return `<button class="tokopt ${mine ? 'sel' : ''}" data-act="setToken" data-id="${row}" data-tok="${t}" style="--pc:${PLAYER_COLORS[row]}">
+            ${tokenSvg(t, PLAYER_COLORS[row])}<span>${TOKEN_NAMES[t as keyof typeof TOKEN_NAMES]}</span>
+            ${owner >= 0 && !mine ? `<i>у «${esc(this.setup[owner].name)}» — поменяетесь</i>` : ''}
+          </button>`;
+        }).join('')}</div>
+        <button class="btn ghost" data-act="close">Отмена</button>`;
+    } else if (this.modal.startsWith('hide:')) {
       const gid = this.modal.slice(5);
       body = `<h3>Убрать партию из списка?</h3>
         <div class="msg">Её нельзя будет продолжить.</div>
@@ -538,7 +574,7 @@ export class App {
   /** Нужно ли показать экран «передай телефон». */
   private needsHandoff(): boolean {
     const game = this.game!;
-    if (game.state.phase === 'gameover') return false;
+    if (game.state.phase === 'gameover' || this.modal === 'order') return false;
     const actor = game.actor();
     if (game.player(actor).isBot || actor === this.holder) return false;
     // Ставки на аукционе — открытая информация: телефон просто передают, без экрана-заставки.
@@ -845,7 +881,7 @@ export class App {
     const delay = game.state.phase === 'auction' ? 350 : BOT_DELAY;
     this.botTimer = window.setTimeout(async () => {
       this.botTimer = null;
-      if (this.busy || this.modal === 'card') return this.scheduleBot();
+      if (this.busy || this.modal === 'card' || this.modal === 'order') return this.scheduleBot();
       const a = botDecide(game, actor);
       if (a) await this.act(actor, a);
     }, delay);
@@ -907,6 +943,18 @@ export class App {
     switch (act) {
       case 'new':
         return this.startNew();
+      case 'pickToken':
+        this.modal = `token:${cell}`;
+        return this.renderMenu();
+      case 'setToken': {
+        const tok = t.dataset.tok!;
+        const other = this.setup.findIndex((r) => r.token === tok);
+        if (other >= 0 && other !== cell) this.setup[other].token = this.setup[cell].token;
+        this.setup[cell].token = tok;
+        this.saveSetup();
+        this.modal = null;
+        return this.renderMenu();
+      }
       case 'toggleKind':
         this.setup[cell].isBot = !this.setup[cell].isBot;
         this.saveSetup();
@@ -920,6 +968,7 @@ export class App {
         const used = new Set(this.setup.map((r) => r.name));
         const name = botNames.find((n) => !used.has(n)) ?? `Игрок ${this.setup.length + 1}`;
         if (this.setup.length < 6) this.setup.push({ name, isBot: true });
+        this.fixTokens(this.setup);
         this.saveSetup();
         return this.renderMenu();
       }
@@ -1603,6 +1652,16 @@ export class App {
         .reverse()
         .map((l) => `<div>${esc(l)}</div>`)
         .join('')}</div><button class="btn blue" data-act="close">Закрыть</button>`;
+    } else if (this.modal === 'order') {
+      body = `<h3>🎲 Жеребьёвка</h3>
+        <div class="hint">Порядок ходов выбран случайно</div>
+        <div class="olist">${this.game!.state.players
+          .map(
+            (p, i) => `<div class="oline" style="--pc:${p.color};animation-delay:${0.25 + i * 0.35}s">
+              <b>${i + 1}</b>${tk(p)}<span>${esc(p.name)}</span>${p.isBot ? '<i>бот</i>' : ''}</div>`,
+          )
+          .join('')}</div>
+        <button class="btn green big" data-act="close">Начать игру</button>`;
     } else if (this.modal === 'payJailConfirm') {
       body = `<h3>Заплатить штраф ${formatMoney(JAIL_FINE)}?</h3>
         <div class="msg">Можно бесплатно попробовать выбросить дубль — у вас попытка ${(this.game?.player(this.me()).jailTurns ?? 0) + 1} из 3. Штраф платят, если не хотят ждать.</div>

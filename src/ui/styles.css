@@ -2040,3 +2040,110 @@ button {
   font-size: 14px;
   color: var(--indigo-d);
 }
+
+/* ——— Выбор фишки и жеребьёвка ——— */
+.tokpick {
+  border: none;
+  background: none;
+  padding: 0 2px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  cursor: pointer;
+}
+.tokpick i {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1;
+}
+.tokgrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.tokopt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border: 2px solid var(--line);
+  background: #fff;
+  border-radius: 14px;
+  padding: 10px 4px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--ink);
+}
+.tokopt .tk {
+  width: 46px;
+  height: 46px;
+}
+.tokopt.sel {
+  border-color: var(--pc);
+  background: color-mix(in srgb, var(--pc) 12%, #fff);
+}
+.tokopt i {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 10.5px;
+  color: var(--muted);
+  text-align: center;
+}
+.olist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.oline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 2px solid var(--pc);
+  background: color-mix(in srgb, var(--pc) 10%, #fff);
+  font-size: 18px;
+  font-weight: 700;
+  opacity: 0;
+  animation: orderIn 0.45s cubic-bezier(0.3, 1.5, 0.5, 1) forwards;
+}
+.oline b {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--pc);
+  color: #fff;
+  font-size: 16px;
+}
+.oline .tk {
+  width: 32px;
+  height: 32px;
+}
+.oline span {
+  flex: 1;
+}
+.oline i {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+@keyframes orderIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .oline {
+    animation: none;
+    opacity: 1;
+  }
+}
