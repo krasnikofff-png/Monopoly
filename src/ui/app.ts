@@ -264,6 +264,7 @@ export class App {
     }
     this.sound.enabled = this.prefs.sound;
     root.addEventListener('click', (e) => this.onClick(e));
+    window.addEventListener('keydown', (e) => this.onKey(e));
     root.addEventListener('input', (e) => {
       const t = e.target as HTMLInputElement;
       if (t.dataset.name !== undefined) this.setup[Number(t.dataset.name)].name = t.value;
@@ -1123,6 +1124,34 @@ export class App {
     }
   }
 
+  /** Клавиатура (компьютер): пробел/Enter — главная кнопка, Esc — закрыть окно. */
+  private onKey(e: KeyboardEvent): void {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const el = document.activeElement as HTMLElement | null;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
+    const q = (sel: string) => this.root.querySelector<HTMLElement>(sel);
+    if (e.key === 'Escape') {
+      const close = q('.overlay:not(.locked):not(.sticky) [data-act=close]');
+      if (close) {
+        e.preventDefault();
+        close.click();
+      }
+      return;
+    }
+    if (e.key !== ' ' && e.key !== 'Enter') return;
+    if (e.repeat) return;
+    const overlay = q('.overlay');
+    const target =
+      q('[data-act=ready]') ??
+      (overlay ? null : q('[data-act=dismissNotice]')) ??
+      (this.modal === 'card' ? q('.modal [data-act=close]') : null) ??
+      (overlay ? null : q('.btns .btn.green:not(:disabled)'));
+    if (target) {
+      e.preventDefault();
+      target.click();
+    }
+  }
+
   // ——————————————————— Отрисовка ———————————————————
 
   private render(): void {
@@ -1320,7 +1349,7 @@ export class App {
     const p = game.player(me);
     const owned = game.ownedBy(me);
     if (!owned.length) {
-      return `<div class="mycards empty"><span>${tk(p)} У ${esc(p.name)} пока нет улиц</span></div>`;
+      return `<div class="mycards empty"><span>${tk(p)} ${esc(p.name)}: улиц пока нет</span></div>`;
     }
     return `<div class="mycards" style="--pc:${p.color}">${owned
       .map((id) => {
@@ -1387,7 +1416,7 @@ export class App {
   private bar(p: { token: string; color: string } | null, title: string, sub: string, btns: string, wait = false): string {
     return `<div class="who">${p ? `<div class="pedestal" style="--pc:${p.color}">${tk(p)}</div>` : ''}</div>
       <div class="info"><div class="atitle">${title}</div><div class="asub ${wait ? 'wait' : ''}">${sub}</div></div>
-      <div class="btns">${btns}</div>`;
+      <div class="btns">${btns}${btns ? '<div class="keyhint">Пробел — главная кнопка · Esc — закрыть окно</div>' : ''}</div>`;
   }
 
   private panelHtml(): string {
