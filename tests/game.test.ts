@@ -312,6 +312,11 @@ describe('Игровой движок', () => {
     const g = twoPlayers();
     const s = g.state;
     [26, 27, 29].forEach((id) => (s.cells[id].owner = 0));
+    // Все 40 домов уже на поле: по 4 на десяти улицах соперника.
+    [1, 3, 6, 8, 9, 11, 13, 14, 16, 18].forEach((id) => {
+      s.cells[id].owner = 1;
+      s.cells[id].houses = 4;
+    });
     s.housesLeft = 0;
     expect(g.can(0, { type: 'build', cell: 26 })).toBe(false);
     s.rules = { unlimitedHouses: true };
@@ -320,6 +325,16 @@ describe('Игровой движок', () => {
     expect(s.housesLeft).toBe(0);
     g.dispatch(0, { type: 'sellHouse', cell: 26 });
     expect(s.cells[26].houses).toBe(0);
+  });
+
+  it('запас домов — 40, старые партии пересчитываются при загрузке', () => {
+    const g = twoPlayers();
+    const st = structuredClone(g.state);
+    st.cells[1].owner = 0;
+    st.cells[1].houses = 3;
+    st.housesLeft = 0; // как в старом сохранении с лимитом 32
+    const g2 = new Game(st);
+    expect(g2.state.housesLeft).toBe(40 - 3);
   });
 
   it('боты доигрывают партию до конца без ошибок', () => {

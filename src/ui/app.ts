@@ -1,4 +1,4 @@
-import { BOARD, GROUP_COLORS, JAIL_FINE, START_BONUS, STATION_RENT, UTILITY_MULT, groupCells, isOwnable } from '../data/board';
+import { BOARD, GROUP_COLORS, JAIL_FINE, MAX_HOTELS, MAX_HOUSES, START_BONUS, STATION_RENT, UTILITY_MULT, groupCells, isOwnable } from '../data/board';
 import { CARD_BY_ID } from '../data/cards';
 import { botDecide, tradeGain } from '../engine/bot';
 import { iconSvg, installIcons } from './icons';
@@ -1078,8 +1078,8 @@ export class App {
           // Лимит вернулся — пересчитываем запас банка по тому, что стоит на поле.
           const houses = st.cells.reduce((n, c) => n + (c.houses < 5 ? c.houses : 0), 0);
           const hotels = st.cells.filter((c) => c.houses === 5).length;
-          st.housesLeft = Math.max(0, 32 - houses);
-          st.hotelsLeft = Math.max(0, 12 - hotels);
+          st.housesLeft = Math.max(0, MAX_HOUSES - houses);
+          st.hotelsLeft = Math.max(0, MAX_HOTELS - hotels);
         }
         st.log.push(st.rules.unlimitedHouses ? 'Включено правило: дома без лимита.' : 'Выключено правило: дома без лимита.');
         this.save();

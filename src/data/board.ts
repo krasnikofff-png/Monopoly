@@ -27,7 +27,7 @@ export const START_MONEY = 15000;
 export const START_BONUS = 2000;
 export const JAIL_FINE = 500;
 export const JAIL_CELL = 10;
-export const MAX_HOUSES = 32;
+export const MAX_HOUSES = 40;
 export const MAX_HOTELS = 12;
 
 export const BOARD: Cell[] = [

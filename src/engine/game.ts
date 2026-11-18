@@ -56,6 +56,13 @@ export class Game {
       deck.held = deck.held.filter((id) => CARD_BY_ID[id]);
       deck.index = Math.min(before, deck.order.length);
     }
+    // Запас банка = всего построек минус стоящие на поле (так лимит можно менять между версиями).
+    if (!state.rules?.unlimitedHouses) {
+      const houses = state.cells.reduce((n, c) => n + (c.houses < 5 ? c.houses : 0), 0);
+      const hotels = state.cells.filter((c) => c.houses === 5).length;
+      state.housesLeft = Math.max(0, MAX_HOUSES - houses);
+      state.hotelsLeft = Math.max(0, MAX_HOTELS - hotels);
+    }
   }
 
   static create(setups: PlayerSetup[], seed: number = randomSeed()): Game {
@@ -932,11 +939,11 @@ export class Game {
     if (p.money < cell.houseCost!) throw new GameError(`Не хватает денег: дом стоит ${formatMoney(cell.houseCost!)}`);
     if (!s.rules?.unlimitedHouses) {
       if (own.houses === 4) {
-        if (s.hotelsLeft <= 0) throw new GameError('В банке закончились отели — все 12 уже на поле');
+        if (s.hotelsLeft <= 0) throw new GameError(`В банке закончились отели — все ${MAX_HOTELS} уже на поле`);
         s.hotelsLeft--;
         s.housesLeft += 4;
       } else {
-        if (s.housesLeft <= 0) throw new GameError('В банке закончились дома — все 32 уже на поле');
+        if (s.housesLeft <= 0) throw new GameError(`В банке закончились дома — все ${MAX_HOUSES} уже на поле`);
         s.housesLeft--;
       }
     }
