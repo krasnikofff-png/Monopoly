@@ -35,7 +35,7 @@ export const BOARD: Cell[] = [
   street(1, 'Капотня', 'brown', 600, 40, 500),
   { id: 2, type: 'surprise', name: 'Сюрприз' },
   street(3, 'Бирюлёво', 'brown', 700, 50, 500),
-  { id: 4, type: 'tax', name: 'Налог на доход', amount: 2000 },
+  { id: 4, type: 'surprise', name: 'Сюрприз' },
   { id: 5, type: 'station', name: 'Ленинградский вокзал', short: 'Ленинградский', price: STATION_PRICE },
   street(6, 'Выхино', 'lightblue', 1000, 70, 500),
   { id: 7, type: 'chance', name: 'Шанс' },

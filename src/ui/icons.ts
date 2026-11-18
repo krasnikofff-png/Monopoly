@@ -123,7 +123,7 @@ export const ICONS: Record<number, string> = {
     ${windows(28, 31, 4, 6, 10, 9, 6, 5)}
     ${tree(80, 70, 9)}`,
 
-  // Налог на доход: документ с печатью
+  // Документ с печатью (клетка 4 теперь «Сюрприз» — значок переопределён ниже)
   4: `${shadow(30)}
     <path d="M24 12 L62 12 L74 24 L74 82 L24 82 Z" fill="url(#g-white)" ${O}/>
     <path d="M62 12 L62 24 L74 24" fill="#d5dae5" ${O}/>
@@ -454,6 +454,7 @@ export const ICONS: Record<number, string> = {
 };
 
 // Повторяющиеся клетки используют общий рисунок.
+ICONS[4] = ICONS[2];
 ICONS[17] = ICONS[2];
 ICONS[33] = ICONS[2];
 ICONS[22] = ICONS[7];
