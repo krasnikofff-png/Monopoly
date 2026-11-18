@@ -146,6 +146,8 @@ export interface GameState {
   winner: number | null;
   turnNumber: number;
   rngState: number;
+  /** Домашние правила партии. */
+  rules?: { unlimitedHouses?: boolean };
   log: string[];
 }
 

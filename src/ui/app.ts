@@ -124,6 +124,14 @@ function importId(code: string): string {
   return `imp-${(h >>> 0).toString(36)}`;
 }
 
+function plural(n: number, one: string, few: string, many: string): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+}
+
 /** Проверяет и разбирает сохранённую партию. */
 function parseSave(json: string): GameState | null {
   try {
@@ -1062,6 +1070,23 @@ export class App {
       case 'showCode':
         this.modal = 'code';
         return this.render();
+      case 'toggleUnlimited': {
+        if (!this.game) return;
+        const st = this.game.state;
+        st.rules = { ...st.rules, unlimitedHouses: !st.rules?.unlimitedHouses };
+        if (!st.rules.unlimitedHouses) {
+          // Лимит вернулся — пересчитываем запас банка по тому, что стоит на поле.
+          const houses = st.cells.reduce((n, c) => n + (c.houses < 5 ? c.houses : 0), 0);
+          const hotels = st.cells.filter((c) => c.houses === 5).length;
+          st.housesLeft = Math.max(0, 32 - houses);
+          st.hotelsLeft = Math.max(0, 12 - hotels);
+        }
+        st.log.push(st.rules.unlimitedHouses ? 'Включено правило: дома без лимита.' : 'Выключено правило: дома без лимита.');
+        this.save();
+        this.render();
+        this.showToast(st.rules.unlimitedHouses ? '🏠 Дома без лимита — можно строить' : 'Лимит домов в банке снова действует');
+        return;
+      }
       case 'toggleEdit':
         this.editOwners = !this.editOwners;
         return this.render();
@@ -1594,6 +1619,7 @@ export class App {
         <div class="savestat ${this.store.status.kind}">${esc(this.statusText())}</div>
         <button class="setting" data-act="toggleSound"><span>Звук</span>${tg(this.prefs.sound)}</button>
         <button class="setting" data-act="toggleVibro"><span>Вибрация</span>${tg(this.prefs.vibrate)}</button>
+        <button class="setting" data-act="toggleUnlimited"><span>Дома без лимита<small>домашнее правило: в банке не кончаются дома и отели (сейчас ${this.game ? `в банке ${this.game.state.housesLeft} домов, ${this.game.state.hotelsLeft} отелей` : '—'})</small></span>${tg(!!this.game?.state.rules?.unlimitedHouses)}</button>
         <button class="setting" data-act="toggleEdit"><span>Исправить владельцев<small>в карточке клетки появится выбор владельца</small></span>${tg(this.editOwners)}</button>
         <button class="btn blue" data-act="history">Вернуть партию назад</button>
         <button class="btn blue" data-act="showCode">Код партии (резервная копия)</button>
@@ -1881,14 +1907,23 @@ export class App {
   }
 
   /** Почему с улицей сейчас нельзя что-то сделать — подсказки под кнопками. */
+  /** Почему действие сейчас недоступно — текст правила из движка (или null, если доступно). */
+  private whyNot(player: number, action: Action): string | null {
+    const copy = new Game(structuredClone(this.game!.state));
+    try {
+      copy.dispatch(player, action);
+      return null;
+    } catch (e) {
+      return e instanceof GameError ? e.message.charAt(0).toLowerCase() + e.message.slice(1) : null;
+    }
+  }
+
   private manageHints(id: number): string[] {
     const game = this.game!;
     const s = game.state;
     const me = this.me();
     const c = BOARD[id];
     const own = s.cells[id];
-    const p = game.player(me);
-    const can = (type: string) => game.can(me, { type, cell: id } as Action);
     const myTurn = game.actor() === me && ['roll', 'end', 'buy', 'auction', 'debt'].includes(s.phase);
     if (!myTurn) {
       return [`Сейчас ход другого игрока. Управлять имуществом можно в свой ход.`];
@@ -1901,19 +1936,30 @@ export class App {
       const acc = GROUP_NAMES[c.group!].replace(/ая$/, 'ую').replace(/яя$/, 'юю');
       if (have < ids.length) {
         hints.push(`Чтобы строить, соберите всю ${acc} группу: у вас ${have} из ${ids.length}.`);
-      } else if (ids.some((g) => s.cells[g].mortgaged)) {
-        hints.push('Чтобы строить, выкупите заложенные улицы этой группы.');
-      } else if (own.houses < 5 && !can('build')) {
-        const min = Math.min(...ids.map((g) => s.cells[g].houses));
-        if (own.houses > min) hints.push('Стройте равномерно: сначала поставьте дом на другие улицы группы.');
-        else if (p.money < c.houseCost!) hints.push(`На дом нужно ${formatMoney(c.houseCost!)}, у вас ${formatMoney(p.money)}.`);
+      } else if (own.houses < 5) {
+        const why = this.whyNot(me, { type: 'build', cell: id });
+        if (why) hints.push(`Построить нельзя: ${why}.`);
       }
     }
-    if (c.group && !own.mortgaged && !can('mortgage') && groupCells(c.group).some((g) => s.cells[g].houses > 0)) {
+    if (own.houses > 0) {
+      const why = this.whyNot(me, { type: 'sellHouse', cell: id });
+      if (why) hints.push(`Продать дом нельзя: ${why}.`);
+    }
+    if (!own.mortgaged && own.houses === 0) {
+      const why = this.whyNot(me, { type: 'mortgage', cell: id });
+      if (why && c.group && groupCells(c.group).some((g) => s.cells[g].houses > 0)) hints.push('Чтобы заложить, сначала продайте все дома в группе.');
+    } else if (!own.mortgaged && c.group) {
       hints.push('Чтобы заложить, сначала продайте все дома в группе.');
     }
-    if (own.mortgaged && s.phase !== 'debt' && !can('unmortgage')) {
-      hints.push(`На выкуп из залога нужно ${formatMoney(Game.unmortgageCost(c))}, у вас ${formatMoney(p.money)}.`);
+    if (own.mortgaged && s.phase !== 'debt') {
+      const why = this.whyNot(me, { type: 'unmortgage', cell: id });
+      if (why) hints.push(`Выкупить нельзя: ${why}.`);
+    }
+    const supply = s.rules?.unlimitedHouses
+      ? ''
+      : `В банке: ${s.housesLeft} ${plural(s.housesLeft, 'дом', 'дома', 'домов')} и ${s.hotelsLeft} ${plural(s.hotelsLeft, 'отель', 'отеля', 'отелей')}.`;
+    if (c.type === 'property' && supply && (s.housesLeft <= 4 || hints.some((h) => h.includes('закончились')))) {
+      hints.push(`${supply} Дома возвращаются в банк, когда их продают, а отель освобождает 4 дома. Можно снять лимит: меню ☰ → «Дома без лимита».`);
     }
     return hints;
   }

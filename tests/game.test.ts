@@ -308,6 +308,20 @@ describe('Игровой движок', () => {
     expect(() => g2.dispatch(0, { type: 'roll' })).not.toThrow();
   });
 
+  it('без лимита домов можно строить, даже если банк пуст', () => {
+    const g = twoPlayers();
+    const s = g.state;
+    [26, 27, 29].forEach((id) => (s.cells[id].owner = 0));
+    s.housesLeft = 0;
+    expect(g.can(0, { type: 'build', cell: 26 })).toBe(false);
+    s.rules = { unlimitedHouses: true };
+    g.dispatch(0, { type: 'build', cell: 26 });
+    expect(s.cells[26].houses).toBe(1);
+    expect(s.housesLeft).toBe(0);
+    g.dispatch(0, { type: 'sellHouse', cell: 26 });
+    expect(s.cells[26].houses).toBe(0);
+  });
+
   it('боты доигрывают партию до конца без ошибок', () => {
     for (let seed = 1; seed <= 30; seed++) {
       const g = Game.create(

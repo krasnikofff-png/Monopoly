@@ -927,16 +927,18 @@ export class Game {
     const own = s.cells[cellId];
     if (own.houses >= 5) throw new GameError('Уже стоит отель');
     const min = Math.min(...group.map((id) => s.cells[id].houses));
-    if (own.houses > min) throw new GameError('Стройте равномерно');
+    if (own.houses > min) throw new GameError('Стройте равномерно: сначала поставьте дом на другие улицы группы');
     const p = this.player(playerId);
-    if (p.money < cell.houseCost!) throw new GameError('Недостаточно денег');
-    if (own.houses === 4) {
-      if (s.hotelsLeft <= 0) throw new GameError('В банке нет отелей');
-      s.hotelsLeft--;
-      s.housesLeft += 4;
-    } else {
-      if (s.housesLeft <= 0) throw new GameError('В банке нет домов');
-      s.housesLeft--;
+    if (p.money < cell.houseCost!) throw new GameError(`Не хватает денег: дом стоит ${formatMoney(cell.houseCost!)}`);
+    if (!s.rules?.unlimitedHouses) {
+      if (own.houses === 4) {
+        if (s.hotelsLeft <= 0) throw new GameError('В банке закончились отели — все 12 уже на поле');
+        s.hotelsLeft--;
+        s.housesLeft += 4;
+      } else {
+        if (s.housesLeft <= 0) throw new GameError('В банке закончились дома — все 32 уже на поле');
+        s.housesLeft--;
+      }
     }
     own.houses++;
     this.addMoney(playerId, -cell.houseCost!);
@@ -952,16 +954,19 @@ export class Game {
     if (own.houses === 0) throw new GameError('Здесь нет построек');
     const group = groupCells(cell.group!);
     const max = Math.max(...group.map((id) => s.cells[id].houses));
-    if (own.houses < max) throw new GameError('Продавайте равномерно');
+    if (own.houses < max) throw new GameError('Продавайте равномерно: сначала там, где домов больше');
+    const unlimited = !!s.rules?.unlimitedHouses;
     let sold = 1;
     if (own.houses === 5) {
-      s.hotelsLeft++;
-      const back = Math.min(4, s.housesLeft);
-      s.housesLeft -= back;
+      const back = unlimited ? 4 : Math.min(4, s.housesLeft);
+      if (!unlimited) {
+        s.hotelsLeft++;
+        s.housesLeft -= back;
+      }
       sold = 5 - back;
       own.houses = back;
     } else {
-      s.housesLeft++;
+      if (!unlimited) s.housesLeft++;
       own.houses--;
     }
     const refund = (sold * cell.houseCost!) / 2;
@@ -971,6 +976,7 @@ export class Game {
   }
 
   private returnBuildings(houses: number): void {
+    if (this.state.rules?.unlimitedHouses) return;
     if (houses === 5) this.state.hotelsLeft++;
     else this.state.housesLeft += houses;
   }
