@@ -2148,40 +2148,41 @@ button {
   }
 }
 
-/* ——— Крупная яркая плашка «зачем передают телефон» / «вам предлагают обмен» ——— */
+/* ——— Табличка «зачем передают телефон» / «вам предлагают обмен» ———
+   Сообщение, а не кнопка: светлый фон, цветная полоса слева, тёмный текст, без тени и объёма. */
 .why {
   align-self: stretch;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
   font-weight: 800;
-  font-size: 22px;
+  font-size: 21px;
   line-height: 1.2;
-  color: #fff;
-  padding: 14px 12px;
-  border-radius: 16px;
-  background: linear-gradient(135deg, #5d52ec, #4a3fd6);
-  box-shadow: 0 6px 16px rgba(74, 63, 214, 0.35);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  color: var(--wc-ink, #2f2797);
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: var(--wc-bg, #ebe8ff);
+  border: 1px solid var(--wc-line, #c9c2f5);
+  border-left: 8px solid var(--wc, #4a3fd6);
+  cursor: default;
+  user-select: none;
 }
 .why-trade {
-  background: linear-gradient(135deg, #ffb020, #ff7a1a);
-  box-shadow: 0 6px 18px rgba(255, 122, 26, 0.45);
-  animation: whyPulse 1.4s ease-in-out infinite;
+  --wc: #ff8a1a;
+  --wc-bg: #fff4e5;
+  --wc-line: #ffd29a;
+  --wc-ink: #9a4a00;
 }
 .why-debt {
-  background: linear-gradient(135deg, #ff5a5f, #d93a40);
-  box-shadow: 0 6px 18px rgba(229, 72, 77, 0.4);
+  --wc: #e5484d;
+  --wc-bg: #ffecec;
+  --wc-line: #ffc2c4;
+  --wc-ink: #a3262b;
 }
 .why-auction {
-  background: linear-gradient(135deg, #2ecc71, #1f9d55);
-}
-@keyframes whyPulse {
-  50% {
-    transform: scale(1.04);
-    box-shadow: 0 8px 26px rgba(255, 122, 26, 0.6);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .why-trade {
-    animation: none;
-  }
+  --wc: #1f9d55;
+  --wc-bg: #e6f8ee;
+  --wc-line: #b5e8c9;
+  --wc-ink: #146b39;
 }
