@@ -1767,7 +1767,14 @@ export class App {
       ids.length
         ? `<div class="agroup"><div class="ghead">${title} <span class="gbadge">${ids.length} из ${total}</span></div>${ids.map(item).join('')}</div>`
         : '';
-    return `<h3 style="--pc:${p.color}">${tk(p)} Имущество: ${esc(p.name)}</h3>
+    const worth = game.netWorth(me) - p.money;
+    return `<div class="asset-head" style="--pc:${p.color}">
+        <h3>${tk(p)} Имущество: ${esc(p.name)}</h3>
+        <div class="balance">
+          <div><span>Баланс</span><b>${formatMoney(p.money)}</b></div>
+          <div><span>Имущество</span><b>${formatMoney(worth)}</b></div>
+        </div>
+      </div>
       ${owned.size ? '' : '<p class="msg">Пока ничего нет. Покупайте улицы!</p>'}
       <div class="asset-list">
         ${groups.map((g) => g.html).join('')}

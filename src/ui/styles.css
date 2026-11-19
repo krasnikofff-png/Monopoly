@@ -2186,3 +2186,49 @@ button {
   --wc-line: #b5e8c9;
   --wc-ink: #146b39;
 }
+
+/* ——— Баланс вверху «Имущества» (закреплён при прокрутке) ——— */
+.asset-head {
+  position: sticky;
+  top: -16px;
+  z-index: 2;
+  margin: -16px -16px 0;
+  padding: 16px 16px 10px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.asset-head h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.balance {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.balance > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--pc) 9%, #fff);
+  border: 1px solid color-mix(in srgb, var(--pc) 35%, #fff);
+}
+.balance span {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.balance b {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
