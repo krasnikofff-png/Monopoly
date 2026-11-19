@@ -1793,7 +1793,7 @@ export class App {
       return items.join('') || '<div class="empty">ничего</div>';
     };
     const after = me.money + o.giveMoney - o.getMoney;
-    return `<h3>Предложение обмена</h3>
+    return `<div class="why why-trade">🤝 Вам предлагают обмен</div>
       <div class="ofrom">${tk(from)}<b>${esc(from.name)}</b> предлагает сделку</div>
       <div class="tcols">
         <div class="tside"><div class="ttitle">Вы получаете</div>${list(o.giveCells, o.giveMoney)}</div>
@@ -1808,12 +1808,20 @@ export class App {
 
   private handoffHtml(): string {
     const p = this.game!.player(this.game!.actor());
-    const why = this.game!.state.phase === 'trade' ? 'Вам предлагают обмен' : this.game!.state.phase === 'auction' ? 'Ваша ставка на аукционе' : this.game!.state.phase === 'debt' ? 'Нужно заплатить долг' : 'Ваш ход';
+    const phase = this.game!.state.phase;
+    const [why, kind] =
+      phase === 'trade'
+        ? ['🤝 Вам предлагают обмен', 'trade']
+        : phase === 'auction'
+          ? ['🔨 Ваша ставка на аукционе', 'auction']
+          : phase === 'debt'
+            ? ['⚠️ Нужно заплатить долг', 'debt']
+            : ['🎲 Ваш ход', 'turn'];
     return `<div class="overlay locked"><div class="modal handoff" style="--pc:${p.color}">
       <div class="big-token">${tk(p)}</div>
       <div class="msg">Передайте телефон</div>
       <div class="msg big">${esc(p.name)}</div>
-      <div class="msg">${why}</div>
+      <div class="why why-${kind}">${why}</div>
       <button class="btn big green" data-act="ready">Поехали!</button>
     </div></div>`;
   }
