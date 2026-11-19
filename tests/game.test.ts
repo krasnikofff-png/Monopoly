@@ -337,7 +337,7 @@ describe('Игровой движок', () => {
     expect(g2.state.housesLeft).toBe(40 - 3);
   });
 
-  it('бот не повторяет то же предложение раньше чем через 4 своих хода', () => {
+  it('после отказа бот не повторяет сделку, а только улучшает условия', () => {
     // Бот (P0) собрал 2 из 3 голубых, третья — у человека (P1).
     const g = Game.create(
       [
@@ -350,21 +350,31 @@ describe('Игровой движок', () => {
     s.cells[6].owner = 0;
     s.cells[8].owner = 0;
     s.cells[9].owner = 1;
-    const first = botDecide(g, 0)!;
-    expect(first.type).toBe('proposeTrade');
-    g.dispatch(0, first);
-    g.dispatch(1, { type: 'rejectTrade' });
-    // Следующий ход бота — повтор запрещён: либо другие условия, либо ничего.
-    s.turnNumber += 2;
-    s.tradesThisTurn = 0;
-    const second = botDecide(g, 0)!;
-    if (second.type === 'proposeTrade') {
-      expect(JSON.stringify(second)).not.toBe(JSON.stringify(first));
+    type P = { type: 'proposeTrade'; offer: { giveCells: number[]; getCells: number[]; giveMoney: number; getMoney: number } };
+    let last: P | null = null;
+    for (let round = 0; round < 12; round++) {
+      const a = botDecide(g, 0);
+      if (!a || a.type !== 'proposeTrade') break;
+      const cur = a as P;
+      if (last) {
+        // Каждое новое предложение строго лучше прошлого: не меньше денег и улиц, и хоть что-то больше.
+        expect(cur.offer.getCells).toEqual(last.offer.getCells);
+        for (const c of last.offer.giveCells) expect(cur.offer.giveCells).toContain(c);
+        expect(cur.offer.giveMoney).toBeGreaterThanOrEqual(last.offer.giveMoney);
+        expect(
+          cur.offer.giveMoney > last.offer.giveMoney || cur.offer.giveCells.length > last.offer.giveCells.length,
+        ).toBe(true);
+      }
+      g.dispatch(0, a);
+      g.dispatch(1, { type: 'rejectTrade' });
+      s.turnNumber += 2; // следующий ход бота
+      s.tradesThisTurn = 0;
+      last = cur;
     }
-    // Через 4 своих хода (4 круга по 2 игрока) тот же вариант снова разрешён.
-    s.turnNumber += 8;
-    const offer = { ...(first as { offer: Omit<import('../src/engine/types').TradeOffer, 'from'> }).offer, from: 0 };
-    expect(g.recentlyOffered(offer)).toBe(false);
+    expect(last).not.toBeNull();
+    // Даже через много ходов тот же отклонённый вариант не повторится.
+    s.turnNumber += 100;
+    expect(g.canReoffer({ ...last!.offer, from: 0, to: 1 })).toBe(false);
   });
 
   it('боты доигрывают партию до конца без ошибок', () => {

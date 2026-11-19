@@ -90,8 +90,8 @@ function findTrade(game: Game, pid: number): Action | null {
       for (let m = 0; m <= budget; m += 250) {
         const offer: TradeOffer = { from: pid, to: partner, giveCells: give, getCells: missing, giveMoney: m, getMoney: 0 };
         if (tradeGain(game, pid, offer) <= 0) break;
-        // То же самое уже предлагали недавно — не повторяемся, а пробуем условия получше.
-        if (game.recentlyOffered(offer)) continue;
+        // После отказа — только лучше для партнёра: больше денег или больше улиц.
+        if (!game.canReoffer(offer)) continue;
         if (botAcceptsTrade(game, partner, offer)) {
           const { from: _from, ...rest } = offer;
           const action: Action = { type: 'proposeTrade', offer: rest };

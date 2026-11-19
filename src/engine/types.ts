@@ -141,8 +141,8 @@ export interface GameState {
   trade: TradeOffer | null;
   tradeResume: Phase | null;
   tradesThisTurn: number;
-  /** Когда (номер хода) делалось каждое предложение обмена: ключ — условия сделки. */
-  offerLog?: Record<string, number>;
+  /** Отклонённые предложения: ключ — кто, кому и за какие улицы; значение — лучшие отклонённые условия. */
+  rejectedOffers?: Record<string, { giveCells: number[]; giveMoney: number; getMoney: number }>;
   housesLeft: number;
   hotelsLeft: number;
   winner: number | null;
