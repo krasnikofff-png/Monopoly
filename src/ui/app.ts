@@ -779,14 +779,19 @@ export class App {
         }
         case 'gameover': {
           const w = e.winner !== null ? game.player(e.winner) : null;
-          this.sfx(w && !w.isBot ? 'win' : 'lose');
+          this.sfx('win');
+          this.modal = 'gameover';
           this.render();
-          const r = this.rectOf('.center');
-          if (r) {
-            const colors = ['#ffd84d', '#5d52ec', '#ff5a7a', '#2ecc71', '#5ec8f2'];
-            confetti(r, colors, 60, 1.6);
-            window.setTimeout(() => confetti(r, colors, 40, 1.3), 400);
-          }
+          // Несколько волн конфетти по всему экрану.
+          const colors = ['#ffd84d', '#5d52ec', '#ff5a7a', '#2ecc71', '#5ec8f2', w?.color ?? '#ffd84d'];
+          const vw = window.innerWidth;
+          const vh = window.innerHeight;
+          const at = (x: number, y: number) => new DOMRect(x, y, 1, 1);
+          confetti(at(vw / 2, vh * 0.35), colors, 70, 1.8);
+          window.setTimeout(() => confetti(at(vw * 0.2, vh * 0.5), colors, 40, 1.4), 450);
+          window.setTimeout(() => confetti(at(vw * 0.8, vh * 0.5), colors, 40, 1.4), 800);
+          window.setTimeout(() => this.sfx('win'), 1600);
+          window.setTimeout(() => confetti(at(vw / 2, vh * 0.25), colors, 50, 1.6), 1700);
           break;
         }
         default:
@@ -943,6 +948,17 @@ export class App {
     switch (act) {
       case 'new':
         return this.startNew();
+      case 'playAgain':
+        // Те же игроки, фишки и роли, что в закончившейся партии.
+        if (this.game) {
+          this.setup = this.game.state.players.map((p) => ({ name: p.name, isBot: p.isBot, token: p.token }));
+          this.fixTokens(this.setup);
+        }
+        this.modal = null;
+        this.game = null;
+        this.gameId = null;
+        this.startNew();
+        return;
       case 'pickToken':
         this.modal = `token:${cell}`;
         return this.renderMenu();
@@ -1652,6 +1668,8 @@ export class App {
         .reverse()
         .map((l) => `<div>${esc(l)}</div>`)
         .join('')}</div><button class="btn blue" data-act="close">Закрыть</button>`;
+    } else if (this.modal === 'gameover') {
+      body = this.gameoverHtml();
     } else if (this.modal === 'order') {
       body = `<h3>🎲 Жеребьёвка</h3>
         <div class="hint">Порядок ходов выбран случайно</div>
@@ -1811,6 +1829,35 @@ export class App {
         <button class="btn yellow" data-act="rejectTrade">Отклонить</button>
         <button class="btn green" data-act="acceptTrade">Принять</button>
       </div>`;
+  }
+
+  /** Поздравительное окно в конце партии. */
+  private gameoverHtml(): string {
+    const game = this.game!;
+    const s = game.state;
+    const w = s.winner !== null ? game.player(s.winner) : null;
+    if (!w) {
+      return `<h3>Игра окончена</h3><button class="btn green big" data-act="menu">В меню</button>`;
+    }
+    const streets = game.ownedBy(w.id).length;
+    const houses = game.ownedBy(w.id).reduce((n, id) => n + s.cells[id].houses, 0);
+    const losers = s.players.filter((p) => p.id !== w.id);
+    return `<div class="win" style="--pc:${w.color}">
+        <div class="win-cup">🏆</div>
+        <div class="win-token">${tk(w)}</div>
+        <div class="win-title">Поздравляем, ${esc(w.name)}!</div>
+        <div class="win-sub">${w.isBot ? 'Бот оказался сильнее в этот раз' : 'Вы — настоящий московский магнат'}</div>
+        <div class="win-stats">
+          <div><b>${formatMoney(w.money)}</b><span>на счету</span></div>
+          <div><b>${formatMoney(game.netWorth(w.id))}</b><span>капитал</span></div>
+          <div><b>${streets}</b><span>${plural(streets, 'улица', 'улицы', 'улиц')}</span></div>
+          <div><b>${houses}</b><span>${plural(houses, 'дом', 'дома', 'домов')}</span></div>
+        </div>
+        <div class="win-meta">Партия длилась ${s.turnNumber} ${plural(s.turnNumber, 'ход', 'хода', 'ходов')}</div>
+        <div class="win-losers">${losers.map((p) => `<span>${tk(p)} ${esc(p.name)} — банкрот</span>`).join('')}</div>
+      </div>
+      <button class="btn green big" data-act="playAgain">Сыграть ещё</button>
+      <button class="btn ghost" data-act="menu">В меню</button>`;
   }
 
   private handoffHtml(): string {

@@ -2232,3 +2232,101 @@ button {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
+
+/* ——— Поздравительное окно в конце партии ——— */
+.win {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 6px 0 4px;
+}
+.win-cup {
+  font-size: 64px;
+  line-height: 1;
+  animation: cupIn 0.7s cubic-bezier(0.3, 1.6, 0.5, 1) both;
+  filter: drop-shadow(0 6px 10px rgba(196, 125, 18, 0.35));
+}
+.win-token {
+  margin-top: -6px;
+  line-height: 0;
+  padding: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--pc) 18%, #fff);
+  border: 3px solid var(--pc);
+  animation: cupIn 0.7s 0.2s cubic-bezier(0.3, 1.6, 0.5, 1) both;
+}
+.win-token .tk {
+  width: 52px;
+  height: 52px;
+}
+.win-title {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.15;
+  margin-top: 4px;
+}
+.win-sub {
+  font-size: 14px;
+  color: var(--muted);
+}
+.win-stats {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+.win-stats > div {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--pc) 8%, #fff);
+  border: 1px solid color-mix(in srgb, var(--pc) 30%, #fff);
+}
+.win-stats b {
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.win-stats span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.win-meta {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.win-losers {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.win-losers span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  text-decoration: line-through;
+}
+.win-losers .tk {
+  width: 18px;
+  height: 18px;
+}
+@keyframes cupIn {
+  from {
+    transform: scale(0.2) rotate(-20deg);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .win-cup,
+  .win-token {
+    animation: none;
+  }
+}
