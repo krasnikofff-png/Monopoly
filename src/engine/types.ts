@@ -102,6 +102,64 @@ export interface Debt {
   debtor: number;
   creditor: number | null; // null = банк
   amount: number;
+  /** За что долг — для статистики. */
+  kind?: FlowKind;
+}
+
+/** Статьи движения денег (для статистики). */
+export type FlowKind =
+  | 'rent'
+  | 'tax'
+  | 'fine'
+  | 'card'
+  | 'repairs'
+  | 'start'
+  | 'buy'
+  | 'auction'
+  | 'build'
+  | 'sell'
+  | 'mortgage'
+  | 'unmortgage'
+  | 'trade'
+  | 'transfer'
+  | 'bankrupt';
+
+export type StatCounter =
+  | 'buys'
+  | 'auctions'
+  | 'built'
+  | 'sold'
+  | 'mortgages'
+  | 'unmortgages'
+  | 'jail'
+  | 'doubles'
+  | 'starts'
+  | 'cards'
+  | 'trades'
+  | 'transfers'
+  | 'rentTimes';
+
+export interface PlayerPeak {
+  money: number;
+  worth: number;
+  streets: number;
+  houses: number;
+  mortgaged: number;
+}
+
+export interface GameStats {
+  /** С какого хода ведётся учёт (у старых сохранений — не с первого). */
+  since: number;
+  /** Сколько денег ушло у игрока по каждой статье. */
+  out: Partial<Record<FlowKind, number>>[];
+  /** Сколько денег пришло по каждой статье. */
+  in: Partial<Record<FlowKind, number>>[];
+  /** paid[a][b] — сколько всего игрок a заплатил игроку b. */
+  paid: number[][];
+  count: Partial<Record<StatCounter, number>>[];
+  peak: PlayerPeak[];
+  /** Капитал игроков по ходам: [номер хода, капитал игрока 0, 1, …]. */
+  worth: number[][];
 }
 
 export interface TradeOffer {
@@ -150,6 +208,7 @@ export interface GameState {
   rngState: number;
   /** Домашние правила партии. */
   rules?: { unlimitedHouses?: boolean };
+  stats?: GameStats;
   log: string[];
 }
 

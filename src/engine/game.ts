@@ -19,11 +19,14 @@ import type {
   ColorGroup,
   Deck,
   DeckId,
+  FlowKind,
   GameEvent,
+  GameStats,
   GameState,
   Phase,
   Player,
   PlayerSetup,
+  StatCounter,
   TradeOffer,
 } from './types';
 
@@ -67,6 +70,24 @@ export class Game {
       state.housesLeft = Math.max(0, MAX_HOUSES - houses);
       state.hotelsLeft = Math.max(0, MAX_HOTELS - hotels);
     }
+    if (!state.stats) {
+      const n = state.players.length;
+      state.stats = {
+        since: state.turnNumber,
+        out: state.players.map(() => ({})),
+        in: state.players.map(() => ({})),
+        paid: state.players.map(() => Array<number>(n).fill(0)),
+        count: state.players.map(() => ({})),
+        peak: state.players.map(() => ({ money: 0, worth: 0, streets: 0, houses: 0, mortgaged: 0 })),
+        worth: [],
+      };
+      this.trackPeaks();
+      this.sampleWorth();
+    }
+  }
+
+  get stats(): GameStats {
+    return this.state.stats!;
   }
 
   static create(setups: PlayerSetup[], seed: number = randomSeed()): Game {
@@ -151,6 +172,11 @@ export class Game {
     const s = this.state;
     if (s.phase === 'gameover') throw new GameError('Игра окончена');
     if (playerId !== this.actor()) throw new GameError('Сейчас не ваш ход');
+    this.apply(playerId, action);
+    this.trackPeaks();
+  }
+
+  private apply(playerId: number, action: Action): void {
     switch (action.type) {
       case 'roll':
         return this.roll();
@@ -288,14 +314,16 @@ export class Game {
         this.emit({ kind: 'notice', tone: 'pay', title: 'Штраф', text: `${p.name} платит за выход из тюрьмы`, amount: JAIL_FINE, cell: 10, from: p.id, to: null });
         p.inJail = false;
         p.jailTurns = 0;
-        this.charge(p.id, null, JAIL_FINE);
+        this.charge(p.id, null, JAIL_FINE, 'fine');
       }
+      if (isDouble) this.bump(p.id, 'doubles');
       this.moveBy(p.id, d1 + d2);
       this.finishAction();
       return;
     }
 
     if (isDouble) {
+      this.bump(p.id, 'doubles');
       s.doublesCount++;
       if (s.doublesCount >= 3) {
         this.log(`Три дубля подряд — ${p.name} отправляется в тюрьму!`);
@@ -330,6 +358,7 @@ export class Game {
     s.lastCard = null;
     s.tradesThisTurn = 0;
     s.turnNumber++;
+    this.sampleWorth();
     this.log(`Ходит ${s.players[next].name}.`);
   }
 
@@ -383,7 +412,8 @@ export class Game {
   private passStart(playerId: number): void {
     const p = this.player(playerId);
     this.emit({ kind: 'notice', tone: 'gain', title: 'Старт', text: `${p.name} проходит Старт`, amount: START_BONUS, cell: 0, from: null, to: playerId });
-    this.addMoney(playerId, START_BONUS);
+    this.addMoney(playerId, START_BONUS, 'start');
+    this.bump(playerId, 'starts');
     this.log(`${p.name} проходит Старт и получает ${formatMoney(START_BONUS)}.`);
   }
 
@@ -400,6 +430,7 @@ export class Game {
     }
     this.emit({ kind: 'move', player: playerId, from, to: JAIL_CELL, steps: 0, direct: true });
     this.emit({ kind: 'jail', player: playerId });
+    this.bump(playerId, 'jail');
   }
 
   // ——————————————————— Клетки ———————————————————
@@ -439,7 +470,8 @@ export class Game {
         from: playerId,
         to: own.owner,
       });
-      this.charge(playerId, own.owner, rent);
+      this.bump(playerId, 'rentTimes');
+      this.charge(playerId, own.owner, rent, 'rent');
       return;
     }
 
@@ -447,7 +479,7 @@ export class Game {
       case 'tax':
         this.log(`${p.name} платит «${cell.name}»: ${formatMoney(cell.amount!)}.`);
         this.emit({ kind: 'notice', tone: 'pay', title: cell.name, text: `${p.name} платит банку`, amount: cell.amount, cell: cell.id, from: playerId, to: null });
-        this.charge(playerId, null, cell.amount!);
+        this.charge(playerId, null, cell.amount!, 'tax');
         return;
       case 'gotojail':
         this.log(`${p.name} отправляется в тюрьму!`);
@@ -489,13 +521,14 @@ export class Game {
     const p = this.player(playerId);
     s.lastCard = card.id;
     this.emit({ kind: 'card', card: card.id });
+    this.bump(playerId, 'cards');
     this.log(`${p.name} тянет «${deckId === 'chance' ? 'Шанс' : 'Сюрприз'}»: ${card.text}`);
 
     const e = card.effect;
     switch (e.kind) {
       case 'money':
-        if (e.amount >= 0) this.addMoney(playerId, e.amount);
-        else this.charge(playerId, null, -e.amount);
+        if (e.amount >= 0) this.addMoney(playerId, e.amount, 'card');
+        else this.charge(playerId, null, -e.amount, 'card');
         return;
       case 'moveTo':
         this.moveTo(playerId, e.cell);
@@ -529,18 +562,18 @@ export class Game {
         }
         if (total > 0) {
           this.log(`${p.name} платит за ремонт ${formatMoney(total)}.`);
-          this.charge(playerId, null, total);
+          this.charge(playerId, null, total, 'repairs');
         }
         return;
       }
       case 'collectFromEach':
         for (const other of this.activePlayers()) {
-          if (other.id !== playerId) this.charge(other.id, playerId, e.amount);
+          if (other.id !== playerId) this.charge(other.id, playerId, e.amount, 'card');
         }
         return;
       case 'payEach':
         for (const other of this.activePlayers()) {
-          if (other.id !== playerId) this.charge(playerId, other.id, e.amount);
+          if (other.id !== playerId) this.charge(playerId, other.id, e.amount, 'card');
         }
         return;
     }
@@ -548,23 +581,67 @@ export class Game {
 
   // ——————————————————— Деньги ———————————————————
 
-  private addMoney(playerId: number, amount: number): void {
+  private addMoney(playerId: number, amount: number, kind: FlowKind): void {
     if (amount === 0) return;
     this.player(playerId).money += amount;
+    const book = amount > 0 ? this.stats.in[playerId] : this.stats.out[playerId];
+    book[kind] = (book[kind] ?? 0) + Math.abs(amount);
     this.emit({ kind: 'money', player: playerId, delta: amount });
   }
 
+  /** Платёж от игрока игроку (или банку, если to = null). */
+  private pay(from: number, to: number | null, amount: number, kind: FlowKind): void {
+    if (amount <= 0) return;
+    this.addMoney(from, -amount, kind);
+    if (to !== null) {
+      this.addMoney(to, amount, kind);
+      this.stats.paid[from][to] += amount;
+    }
+  }
+
+  private bump(playerId: number, key: StatCounter, by = 1): void {
+    const c = this.stats.count[playerId];
+    c[key] = (c[key] ?? 0) + by;
+  }
+
+  /** Обновляет рекорды игроков: деньги, капитал, улицы, дома, залоги. */
+  private trackPeaks(): void {
+    const s = this.state;
+    for (const p of s.players) {
+      if (p.bankrupt) continue;
+      const pk = this.stats.peak[p.id];
+      const owned = this.ownedBy(p.id);
+      pk.money = Math.max(pk.money, p.money);
+      pk.worth = Math.max(pk.worth, this.netWorth(p.id));
+      pk.streets = Math.max(pk.streets, owned.length);
+      pk.houses = Math.max(
+        pk.houses,
+        owned.reduce((n, id) => n + s.cells[id].houses, 0),
+      );
+      pk.mortgaged = Math.max(pk.mortgaged, owned.filter((id) => s.cells[id].mortgaged).length);
+    }
+  }
+
+  private sampleWorth(): void {
+    const s = this.state;
+    const w = this.stats.worth;
+    const row = [s.turnNumber, ...s.players.map((p) => (p.bankrupt ? 0 : this.netWorth(p.id)))];
+    if (w.length && w[w.length - 1][0] === s.turnNumber) w[w.length - 1] = row;
+    else w.push(row);
+    // Длинные партии прореживаем, чтобы сохранение не разрасталось.
+    if (w.length > 400) this.stats.worth = w.filter((_, i) => i % 2 === 0 || i === w.length - 1);
+  }
+
   /** Списывает деньги; если их не хватает — создаёт долг. */
-  private charge(debtor: number, creditor: number | null, amount: number): void {
+  private charge(debtor: number, creditor: number | null, amount: number, kind: FlowKind): void {
     if (amount <= 0) return;
     const p = this.player(debtor);
     if (p.bankrupt) return;
     if (this.debts.length === 0 && p.money >= amount) {
-      this.addMoney(debtor, -amount);
-      if (creditor !== null) this.addMoney(creditor, amount);
+      this.pay(debtor, creditor, amount, kind);
       return;
     }
-    this.debts.push({ debtor, creditor, amount });
+    this.debts.push({ debtor, creditor, amount, kind });
     this.log(`${p.name} не хватает денег: долг ${formatMoney(amount)}.`);
     this.emit({
       kind: 'notice',
@@ -583,8 +660,7 @@ export class Game {
     const debt = s.debts[0];
     const p = this.player(debt.debtor);
     if (p.money < debt.amount) throw new GameError('Недостаточно денег');
-    this.addMoney(debt.debtor, -debt.amount);
-    if (debt.creditor !== null) this.addMoney(debt.creditor, debt.amount);
+    this.pay(debt.debtor, debt.creditor, debt.amount, debt.kind ?? 'rent');
     this.log(`${p.name} погашает долг ${formatMoney(debt.amount)}.`);
     s.debts.shift();
     this.resolveDebts();
@@ -612,8 +688,7 @@ export class Game {
           break;
         }
         if (debtor.money >= d.amount) {
-          this.addMoney(d.debtor, -d.amount);
-          if (d.creditor !== null) this.addMoney(d.creditor, d.amount);
+          this.pay(d.debtor, d.creditor, d.amount, d.kind ?? 'rent');
           s.debts.splice(i, 1);
           progress = true;
           break;
@@ -655,7 +730,7 @@ export class Game {
     for (const id of this.ownedBy(p.id)) {
       const own = s.cells[id];
       if (own.houses > 0) {
-        p.money += (own.houses * BOARD[id].houseCost!) / 2;
+        this.addMoney(p.id, (own.houses * BOARD[id].houseCost!) / 2, 'sell');
         this.returnBuildings(own.houses);
         own.houses = 0;
       }
@@ -670,7 +745,7 @@ export class Game {
       }
     }
     if (creditor) {
-      if (p.money > 0) this.addMoney(creditor.id, p.money);
+      if (p.money > 0) this.pay(p.id, creditor.id, p.money, 'bankrupt');
       creditor.jailFreeCards.push(...p.jailFreeCards);
     } else {
       for (const deckId of p.jailFreeCards) {
@@ -682,7 +757,7 @@ export class Game {
         }
       }
     }
-    p.money = 0;
+    if (p.money > 0) this.addMoney(p.id, -p.money, 'bankrupt'); // остаток уходит банку
     p.jailFreeCards = [];
     p.bankrupt = true;
     p.inJail = false;
@@ -695,6 +770,7 @@ export class Game {
       s.winner = alive[0]?.id ?? null;
       s.debts = [];
       this.emit({ kind: 'gameover', winner: s.winner });
+      this.sampleWorth();
       this.log(`Игра окончена! Победитель — ${alive[0]?.name ?? 'никто'}.`);
       return;
     }
@@ -718,7 +794,7 @@ export class Game {
       from: p.id,
       to: null,
     });
-    this.addMoney(p.id, -JAIL_FINE);
+    this.addMoney(p.id, -JAIL_FINE, 'fine');
     p.inJail = false;
     p.jailTurns = 0;
     this.log(`${p.name} платит ${formatMoney(JAIL_FINE)} и выходит из тюрьмы до броска.`);
@@ -750,7 +826,8 @@ export class Game {
     const cell = BOARD[p.position];
     if (s.cells[cell.id].owner !== null) throw new GameError('Клетка уже куплена');
     if (p.money < cell.price!) throw new GameError('Недостаточно денег');
-    this.addMoney(p.id, -cell.price!);
+    this.addMoney(p.id, -cell.price!, 'buy');
+    this.bump(p.id, 'buys');
     s.cells[cell.id].owner = p.id;
     this.emit({ kind: 'buy', player: p.id, cell: cell.id, price: cell.price!, auction: false });
     this.log(`${p.name} покупает «${cell.name}» за ${formatMoney(cell.price!)}.`);
@@ -809,7 +886,8 @@ export class Game {
     if (done) {
       const cell = BOARD[a.cell];
       if (a.bidder !== null && s.cells[a.cell].owner === null) {
-        this.addMoney(a.bidder, -a.bid);
+        this.addMoney(a.bidder, -a.bid, 'auction');
+        this.bump(a.bidder, 'auctions');
         s.cells[a.cell].owner = a.bidder;
         this.emit({ kind: 'buy', player: a.bidder, cell: a.cell, price: a.bid, auction: true });
         this.log(`${this.player(a.bidder).name} выигрывает аукцион: «${cell.name}» за ${formatMoney(a.bid)}.`);
@@ -866,8 +944,8 @@ export class Game {
     const p = this.player(from);
     if (amount > p.money) throw new GameError('У вас нет столько денег');
     this.emit({ kind: 'notice', tone: 'info', title: 'Перевод', text: `${p.name} → ${target.name}`, amount, from, to });
-    this.addMoney(from, -amount);
-    this.addMoney(to, amount);
+    this.pay(from, to, amount, 'transfer');
+    this.bump(from, 'transfers');
     this.log(`Перевод: ${p.name} → ${target.name}, ${formatMoney(amount)}.`);
   }
 
@@ -903,14 +981,10 @@ export class Game {
       this.validateTrade(o);
       for (const id of o.giveCells) s.cells[id].owner = o.to;
       for (const id of o.getCells) s.cells[id].owner = o.from;
-      if (o.giveMoney) {
-        this.addMoney(o.from, -o.giveMoney);
-        this.addMoney(o.to, o.giveMoney);
-      }
-      if (o.getMoney) {
-        this.addMoney(o.to, -o.getMoney);
-        this.addMoney(o.from, o.getMoney);
-      }
+      this.pay(o.from, o.to, o.giveMoney, 'trade');
+      this.pay(o.to, o.from, o.getMoney, 'trade');
+      this.bump(o.from, 'trades');
+      this.bump(o.to, 'trades');
     }
     if (!accept) {
       // Запоминаем отказ: эту сделку можно будет предложить только на лучших условиях.
@@ -968,7 +1042,8 @@ export class Game {
       }
     }
     own.houses++;
-    this.addMoney(playerId, -cell.houseCost!);
+    this.addMoney(playerId, -cell.houseCost!, 'build');
+    this.bump(playerId, 'built');
     this.emit({ kind: 'build', cell: cellId, houses: own.houses });
     this.log(`${p.name} строит ${own.houses === 5 ? 'отель' : 'дом'} на «${cell.name}».`);
   }
@@ -997,7 +1072,8 @@ export class Game {
       own.houses--;
     }
     const refund = (sold * cell.houseCost!) / 2;
-    this.addMoney(playerId, refund);
+    this.addMoney(playerId, refund, 'sell');
+    this.bump(playerId, 'sold', sold);
     this.emit({ kind: 'build', cell: cellId, houses: own.houses });
     this.log(`${this.player(playerId).name} продаёт постройку на «${cell.name}» за ${formatMoney(refund)}.`);
   }
@@ -1019,7 +1095,8 @@ export class Game {
       throw new GameError('Сначала продайте постройки в группе');
     }
     own.mortgaged = true;
-    this.addMoney(playerId, cell.price! / 2);
+    this.addMoney(playerId, cell.price! / 2, 'mortgage');
+    this.bump(playerId, 'mortgages');
     this.log(`${this.player(playerId).name} закладывает «${cell.name}» за ${formatMoney(cell.price! / 2)}.`);
   }
 
@@ -1036,7 +1113,8 @@ export class Game {
     const cost = Game.unmortgageCost(cell);
     if (this.player(playerId).money < cost) throw new GameError('Недостаточно денег');
     own.mortgaged = false;
-    this.addMoney(playerId, -cost);
+    this.addMoney(playerId, -cost, 'unmortgage');
+    this.bump(playerId, 'unmortgages');
     this.log(`${this.player(playerId).name} выкупает «${cell.name}» за ${formatMoney(cost)}.`);
   }
 

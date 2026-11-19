@@ -8,7 +8,7 @@ import { Sound, type SoundName } from './sound';
 import { GameStore, TURN_SLOTS, exportCode, importCode, newGameId, type GameMeta, type TurnSnap } from './store';
 import { confetti, floatText, flyCoins, shake, tweenNumber } from './fx';
 import { Game, GameError, PLAYER_COLORS, PLAYER_TOKENS, formatMoney } from '../engine/game';
-import type { Action, ColorGroup, GameEvent, GameState } from '../engine/types';
+import type { Action, ColorGroup, FlowKind, GameEvent, GameState, StatCounter } from '../engine/types';
 
 type Notice = Extract<GameEvent, { kind: 'notice' }>;
 
@@ -124,6 +124,20 @@ function importId(code: string): string {
   let h = 5381;
   for (const ch of code.trim()) h = ((h << 5) + h + ch.charCodeAt(0)) | 0;
   return `imp-${(h >>> 0).toString(36)}`;
+}
+
+/** Красивый шаг сетки: 1, 2 или 5 × 10ⁿ. */
+function niceStep(raw: number): number {
+  const p = 10 ** Math.floor(Math.log10(Math.max(1, raw)));
+  const m = raw / p;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+}
+
+/** 25 000 → «25 тыс.», 1 200 000 → «1,2 млн». */
+function shortMoney(v: number): string {
+  if (v >= 1_000_000) return `${(v / 1_000_000).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} млн`;
+  if (v >= 1000) return `${(v / 1000).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} тыс.`;
+  return String(v);
 }
 
 function plural(n: number, one: string, few: string, many: string): string {
@@ -280,6 +294,8 @@ export class App {
     }
     this.sound.enabled = this.prefs.sound;
     root.addEventListener('click', (e) => this.onClick(e));
+    root.addEventListener('pointermove', (e) => this.chartHover(e));
+    root.addEventListener('pointerdown', (e) => this.chartHover(e));
     window.addEventListener('keydown', (e) => this.onKey(e));
     root.addEventListener('input', (e) => {
       const t = e.target as HTMLInputElement;
@@ -1132,6 +1148,12 @@ export class App {
       case 'settings':
         this.modal = 'settings';
         return this.render();
+      case 'stats':
+        this.modal = 'stats';
+        return this.render();
+      case 'statsBack':
+        this.modal = this.game?.state.phase === 'gameover' ? 'gameover' : 'settings';
+        return this.render();
       case 'showCode':
         this.modal = 'code';
         return this.render();
@@ -1670,6 +1692,8 @@ export class App {
         .join('')}</div><button class="btn blue" data-act="close">Закрыть</button>`;
     } else if (this.modal === 'gameover') {
       body = this.gameoverHtml();
+    } else if (this.modal === 'stats') {
+      body = this.statsHtml();
     } else if (this.modal === 'order') {
       body = `<h3>🎲 Жеребьёвка</h3>
         <div class="hint">Порядок ходов выбран случайно</div>
@@ -1698,6 +1722,7 @@ export class App {
         <button class="setting" data-act="toggleVibro"><span>Вибрация</span>${tg(this.prefs.vibrate)}</button>
         <button class="setting" data-act="toggleUnlimited"><span>Дома без лимита<small>домашнее правило: в банке не кончаются дома и отели (сейчас ${this.game ? `в банке ${this.game.state.housesLeft} домов, ${this.game.state.hotelsLeft} отелей` : '—'})</small></span>${tg(!!this.game?.state.rules?.unlimitedHouses)}</button>
         <button class="setting" data-act="toggleEdit"><span>Исправить владельцев<small>в карточке клетки появится выбор владельца</small></span>${tg(this.editOwners)}</button>
+        <button class="btn blue" data-act="stats">📊 Статистика партии</button>
         <button class="btn blue" data-act="history">Вернуть партию назад</button>
         <button class="btn blue" data-act="showCode">Код партии (резервная копия)</button>
         <button class="btn red" data-act="menu">Выйти в главное меню</button>
@@ -1856,8 +1881,201 @@ export class App {
         <div class="win-meta">Партия длилась ${s.turnNumber} ${plural(s.turnNumber, 'ход', 'хода', 'ходов')}</div>
         <div class="win-losers">${losers.map((p) => `<span>${tk(p)} ${esc(p.name)} — банкрот</span>`).join('')}</div>
       </div>
+      <button class="btn blue" data-act="stats">📊 Статистика партии</button>
       <button class="btn green big" data-act="playAgain">Сыграть ещё</button>
       <button class="btn ghost" data-act="menu">В меню</button>`;
+  }
+
+  /** Статистика партии: деньги по статьям, имущество, рекорды, кто кому платил, график капитала. */
+  private statsHtml(): string {
+    const game = this.game!;
+    const s = game.state;
+    const st = s.stats!;
+    const ps = s.players;
+    const sum = (r: Partial<Record<FlowKind, number>>, keys?: FlowKind[]) =>
+      (keys ?? (Object.keys(r) as FlowKind[])).reduce((n, k) => n + (r[k] ?? 0), 0);
+    const out = (k: FlowKind[]) => ps.map((p) => sum(st.out[p.id], k));
+    const inc = (k: FlowKind[]) => ps.map((p) => sum(st.in[p.id], k));
+    const cnt = (k: StatCounter) => ps.map((p) => st.count[p.id][k] ?? 0);
+    const money = (v: number) => formatMoney(v);
+    const num = (v: number) => String(v);
+    type Row = [string, number[], (v: number) => string] | string;
+    const rows: Row[] = [
+      'Деньги',
+      ['Получено всего', ps.map((p) => sum(st.in[p.id])), money],
+      ['Потрачено всего', ps.map((p) => sum(st.out[p.id])), money],
+      ['Получено аренды', inc(['rent']), money],
+      ['Заплачено аренды', out(['rent']), money],
+      ['Попаданий на чужие клетки', cnt('rentTimes'), num],
+      ['Налоги, штрафы, ремонт', out(['tax', 'fine', 'repairs']), money],
+      ['Бонусы за Старт', inc(['start']), money],
+      ['Карточки: выиграно', inc(['card']), money],
+      ['Карточки: проиграно', out(['card']), money],
+      ['Переводы и обмены: отдано', out(['transfer', 'trade']), money],
+      ['Переводы и обмены: получено', inc(['transfer', 'trade']), money],
+      'Имущество',
+      ['Куплено клеток', ps.map((p) => (st.count[p.id].buys ?? 0) + (st.count[p.id].auctions ?? 0)), num],
+      ['из них на аукционе', cnt('auctions'), num],
+      ['Потрачено на покупки', out(['buy', 'auction']), money],
+      ['Построено домов и отелей', cnt('built'), num],
+      ['Потрачено на стройку', out(['build']), money],
+      ['Продано построек', cnt('sold'), num],
+      ['Закладов', cnt('mortgages'), num],
+      ['Получено за залоги', inc(['mortgage']), money],
+      ['Выкупов из залога', cnt('unmortgages'), num],
+      ['Потрачено на выкуп', out(['unmortgage']), money],
+      'Рекорды',
+      ['Больше всего денег', ps.map((p) => st.peak[p.id].money), money],
+      ['Наибольший капитал', ps.map((p) => st.peak[p.id].worth), money],
+      ['Больше всего клеток', ps.map((p) => st.peak[p.id].streets), num],
+      ['Больше всего построек', ps.map((p) => st.peak[p.id].houses), num],
+      ['Больше всего в залоге', ps.map((p) => st.peak[p.id].mortgaged), num],
+      'Сейчас',
+      ['На счету', ps.map((p) => p.money), money],
+      ['Капитал', ps.map((p) => (p.bankrupt ? 0 : game.netWorth(p.id))), money],
+      ['Клеток', ps.map((p) => game.ownedBy(p.id).length), num],
+      ['Построек', ps.map((p) => game.ownedBy(p.id).reduce((n, id) => n + s.cells[id].houses, 0)), num],
+      ['В залоге', ps.map((p) => game.ownedBy(p.id).filter((id) => s.cells[id].mortgaged).length), num],
+      'Разное',
+      ['Дублей', cnt('doubles'), num],
+      ['Раз в тюрьме', cnt('jail'), num],
+      ['Вытянуто карточек', cnt('cards'), num],
+      ['Обменов', cnt('trades'), num],
+      ['Переводов', cnt('transfers'), num],
+    ];
+    const head = `<tr><th></th>${ps.map((p) => `<th style="--pc:${p.color}">${tk(p)}<span>${esc(p.name)}</span></th>`).join('')}</tr>`;
+    const body = rows
+      .map((r) => {
+        if (typeof r === 'string') return `<tr class="sec"><td colspan="${ps.length + 1}">${r}</td></tr>`;
+        const [label, vals, f] = r;
+        const best = Math.max(...vals);
+        return `<tr><td>${label}</td>${vals
+          .map((v) => `<td class="${v > 0 && v === best && vals.filter((x) => x === best).length === 1 ? 'best' : ''}">${v ? f(v) : '—'}</td>`)
+          .join('')}</tr>`;
+      })
+      .join('');
+
+    // Кто кому сколько заплатил (аренда, карточки, обмены, переводы, банкротство).
+    const pairs: string[] = [];
+    for (let a = 0; a < ps.length; a++) {
+      for (let b = a + 1; b < ps.length; b++) {
+        const ab = st.paid[a][b];
+        const ba = st.paid[b][a];
+        if (!ab && !ba) continue;
+        const net = ab - ba;
+        const who = net > 0 ? `в плюсе ${esc(ps[b].name)}, +${money(net)}` : net < 0 ? `в плюсе ${esc(ps[a].name)}, +${money(-net)}` : 'поровну';
+        pairs.push(`<div class="pay-pair">
+          <div class="pay-line">${tk(ps[a])}<span>${esc(ps[a].name)} → ${esc(ps[b].name)}</span><b>${money(ab)}</b></div>
+          <div class="pay-line">${tk(ps[b])}<span>${esc(ps[b].name)} → ${esc(ps[a].name)}</span><b>${money(ba)}</b></div>
+          <div class="pay-net">Итог: ${who}</div>
+        </div>`);
+      }
+    }
+    const bank = ps.map((p) => {
+      const toBank = sum(st.out[p.id]) - st.paid[p.id].reduce((n, v) => n + v, 0);
+      return { p, toBank };
+    });
+    const partial = st.since > 1 ? `<div class="hint">Учёт ведётся с хода ${st.since} — раньше статистика не записывалась.</div>` : '';
+    return `<div class="stats"><h3>📊 Статистика партии</h3>
+      ${partial}
+      <div class="hint">Ходов: ${s.turnNumber}. Лучший результат в строке выделен.</div>
+      ${this.worthChart()}
+      <h4 class="st-h">Кто кому сколько заплатил</h4>
+      ${pairs.length ? pairs.join('') : '<div class="hint">Игроки ещё не платили друг другу.</div>'}
+      <div class="hint">Банку всего (покупки, стройка, налоги, штрафы, выкупы): ${bank.map((b) => `${esc(b.p.name)} — ${money(b.toBank)}`).join(', ')}</div>
+      <div class="st-wrap"><table class="st-table">${head}${body}</table></div></div>
+      <button class="btn ghost" data-act="statsBack">Назад</button>`;
+  }
+
+  /** Линейный график капитала игроков по ходам (SVG). */
+  private worthChart(): string {
+    const game = this.game!;
+    const ps = game.state.players;
+    const rows = game.state.stats!.worth;
+    if (rows.length < 2) return '';
+    const W = 340;
+    const H = 170;
+    const L = 44;
+    const R = 62;
+    const T = 10;
+    const B = 22;
+    const t0 = rows[0][0];
+    const t1 = rows[rows.length - 1][0];
+    const maxV = Math.max(1, ...rows.flatMap((r) => r.slice(1)));
+    const step = niceStep(maxV / 3);
+    const top = Math.ceil(maxV / step) * step;
+    const x = (t: number) => L + ((t - t0) / Math.max(1, t1 - t0)) * (W - L - R);
+    const y = (v: number) => T + (1 - v / top) * (H - T - B);
+    const grid: string[] = [];
+    for (let v = 0; v <= top; v += step) {
+      grid.push(`<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="g"/>`);
+      grid.push(`<text x="${L - 6}" y="${y(v) + 3.5}" class="ax" text-anchor="end">${shortMoney(v)}</text>`);
+    }
+    const ink = (c: string) => `color-mix(in srgb, ${c} 82%, #000)`;
+    const lines = ps
+      .map((p, i) => {
+        const d = rows.map((r, j) => `${j ? 'L' : 'M'}${x(r[0]).toFixed(1)},${y(r[i + 1]).toFixed(1)}`).join('');
+        return `<path d="${d}" fill="none" stroke="${ink(p.color)}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+      })
+      .join('');
+    // Подписи у концов линий, разведённые, чтобы не налезали.
+    const last = rows[rows.length - 1];
+    const ends = ps.map((p, i) => ({ p, v: last[i + 1], y: y(last[i + 1]) })).sort((a, b) => a.y - b.y);
+    for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 12);
+    const labels = ends
+      .map(
+        (e) => `<circle cx="${x(last[0])}" cy="${y(e.v)}" r="4" fill="${ink(e.p.color)}" stroke="var(--card)" stroke-width="2"/>
+          <text x="${W - R + 8}" y="${e.y + 4}" class="lb">${esc(e.p.name.slice(0, 9))}</text>`,
+      )
+      .join('');
+    const legend = ps
+      .map((p) => `<span><i style="background:${ink(p.color)}"></i>${esc(p.name)}</span>`)
+      .join('');
+    return `<h4 class="st-h">Капитал по ходам</h4>
+      <div class="legend">${legend}</div>
+      <div class="wchart" data-t0="${t0}" data-t1="${t1}">
+        <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Капитал игроков по ходам">
+          ${grid.join('')}
+          <text x="${L}" y="${H - 6}" class="ax">ход ${t0}</text>
+          <text x="${W - R}" y="${H - 6}" class="ax" text-anchor="end">ход ${t1}</text>
+          ${lines}${labels}
+          <line class="cross" x1="0" x2="0" y1="${T}" y2="${H - B}" style="display:none"/>
+        </svg>
+        <div class="tip" style="display:none"></div>
+      </div>`;
+  }
+
+  /** Подсказка на графике капитала: ход и капитал каждого игрока под пальцем или курсором. */
+  private chartHover(e: PointerEvent): void {
+    const box = (e.target as Element | null)?.closest?.('.wchart') as HTMLElement | null;
+    if (!box || !this.game?.state.stats) return;
+    const svg = box.querySelector('svg')!;
+    const rect = svg.getBoundingClientRect();
+    const W = 340;
+    const L = 44;
+    const R = 62;
+    const vx = ((e.clientX - rect.left) / rect.width) * W;
+    const rows = this.game.state.stats.worth;
+    const t0 = rows[0][0];
+    const t1 = rows[rows.length - 1][0];
+    const t = t0 + ((vx - L) / (W - L - R)) * (t1 - t0);
+    let row = rows[0];
+    for (const r of rows) if (Math.abs(r[0] - t) < Math.abs(row[0] - t)) row = r;
+    const cx = L + ((row[0] - t0) / Math.max(1, t1 - t0)) * (W - L - R);
+    const cross = svg.querySelector('.cross') as SVGLineElement;
+    cross.setAttribute('x1', String(cx));
+    cross.setAttribute('x2', String(cx));
+    cross.style.display = '';
+    const tip = box.querySelector('.tip') as HTMLElement;
+    const ps = this.game.state.players;
+    tip.innerHTML = `<b>Ход ${row[0]}</b>${ps
+      .map((p, i) => ({ p, v: row[i + 1] }))
+      .sort((a, b) => b.v - a.v)
+      .map(({ p, v }) => `<div><i style="background:${p.color}"></i>${esc(p.name)}<span>${formatMoney(v)}</span></div>`)
+      .join('')}`;
+    tip.style.display = '';
+    const px = (cx / W) * rect.width;
+    tip.style.left = `${Math.min(Math.max(px - tip.offsetWidth / 2, 0), rect.width - tip.offsetWidth)}px`;
   }
 
   private handoffHtml(): string {

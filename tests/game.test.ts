@@ -377,6 +377,20 @@ describe('Игровой движок', () => {
     expect(g.canReoffer({ ...last!.offer, from: 0, to: 1 })).toBe(false);
   });
 
+  it('статистика: аренда записывается как платёж игрока игроку', () => {
+    const g = twoPlayers();
+    const cell = BOARD.findIndex((c) => c.type === 'property' && c.id > 3);
+    g.state.cells[cell].owner = 1;
+    g.state.players[0].position = cell - 3;
+    forceDice(g, 1, 2);
+    g.dispatch(0, { type: 'roll' });
+    const rent = BOARD[cell].rent![0];
+    expect(g.state.stats!.paid[0][1]).toBe(rent);
+    expect(g.state.stats!.out[0].rent).toBe(rent);
+    expect(g.state.stats!.in[1].rent).toBe(rent);
+    expect(g.state.stats!.count[0].rentTimes).toBe(1);
+  });
+
   it('боты доигрывают партию до конца без ошибок', () => {
     for (let seed = 1; seed <= 30; seed++) {
       const g = Game.create(
@@ -402,6 +416,13 @@ describe('Игровой движок', () => {
         expect(s.hotelsLeft).toBeGreaterThanOrEqual(0);
       }
       expect(g.state.phase).toBe('gameover');
+      // Статистика сходится с деньгами: старт + пришло − ушло = на счету.
+      const st = g.state.stats!;
+      const sum = (r: Record<string, number | undefined>) => Object.values(r).reduce<number>((n, v) => n + (v ?? 0), 0);
+      for (const p of g.state.players) expect(START_MONEY + sum(st.in[p.id]) - sum(st.out[p.id])).toBe(p.money);
+      const paidTotal = st.paid.flat().reduce((n, v) => n + v, 0);
+      expect(paidTotal).toBeGreaterThan(0);
+      expect(st.worth.length).toBeGreaterThan(1);
       // Состояние сериализуемо для сохранения.
       expect(() => JSON.parse(JSON.stringify(g.state))).not.toThrow();
     }
