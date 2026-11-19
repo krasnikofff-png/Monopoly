@@ -30,6 +30,14 @@ import type {
 export class GameError extends Error {}
 
 export const MAX_TRADES_PER_TURN = 5;
+/** Через сколько собственных ходов можно повторить то же самое предложение. */
+export const REPEAT_OFFER_TURNS = 4;
+
+/** Условия сделки как строка: одинаковые предложения дают одинаковый ключ. */
+export function offerKey(o: TradeOffer): string {
+  const cells = (c: number[]) => [...c].sort((a, b) => a - b).join(',');
+  return `${o.from}>${o.to}|${cells(o.giveCells)}|${cells(o.getCells)}|${o.giveMoney}|${o.getMoney}`;
+}
 
 export const PLAYER_COLORS = ['#ff4d6d', '#3a86ff', '#2ec4b6', '#ffbe0b', '#9b5de5', '#fb5607'];
 export const PLAYER_TOKENS = ['car', 'hat', 'dog', 'rocket', 'cat', 'ship'];
@@ -875,8 +883,24 @@ export class Game {
     s.trade = { ...o, giveCells: [...o.giveCells], getCells: [...o.getCells] };
     s.tradeResume = s.phase;
     s.tradesThisTurn++;
+    // Запоминаем предложение; старые записи (за пределами окна повтора) выбрасываем.
+    const log = (s.offerLog ??= {});
+    const window = this.repeatWindow();
+    for (const [k, t] of Object.entries(log)) if (s.turnNumber - t >= window) delete log[k];
+    log[offerKey(o)] = s.turnNumber;
     s.phase = 'trade';
     this.log(`${this.player(o.from).name} предлагает обмен игроку ${this.player(o.to).name}.`);
+  }
+
+  /** Окно повтора в номерах ходов: 4 собственных хода = 4 круга по всем игрокам. */
+  private repeatWindow(): number {
+    return REPEAT_OFFER_TURNS * Math.max(1, this.activePlayers().length);
+  }
+
+  /** Делалось ли точно такое же предложение недавно (меньше 4 собственных ходов назад). */
+  recentlyOffered(o: TradeOffer): boolean {
+    const t = this.state.offerLog?.[offerKey(o)];
+    return t !== undefined && this.state.turnNumber - t < this.repeatWindow();
   }
 
   private answerTrade(accept: boolean): void {

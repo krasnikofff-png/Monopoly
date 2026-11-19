@@ -337,6 +337,36 @@ describe('Игровой движок', () => {
     expect(g2.state.housesLeft).toBe(40 - 3);
   });
 
+  it('бот не повторяет то же предложение раньше чем через 4 своих хода', () => {
+    // Бот (P0) собрал 2 из 3 голубых, третья — у человека (P1).
+    const g = Game.create(
+      [
+        { name: 'Бот', isBot: true },
+        { name: 'Человек', isBot: false },
+      ],
+      5,
+    );
+    const s = g.state;
+    s.cells[6].owner = 0;
+    s.cells[8].owner = 0;
+    s.cells[9].owner = 1;
+    const first = botDecide(g, 0)!;
+    expect(first.type).toBe('proposeTrade');
+    g.dispatch(0, first);
+    g.dispatch(1, { type: 'rejectTrade' });
+    // Следующий ход бота — повтор запрещён: либо другие условия, либо ничего.
+    s.turnNumber += 2;
+    s.tradesThisTurn = 0;
+    const second = botDecide(g, 0)!;
+    if (second.type === 'proposeTrade') {
+      expect(JSON.stringify(second)).not.toBe(JSON.stringify(first));
+    }
+    // Через 4 своих хода (4 круга по 2 игрока) тот же вариант снова разрешён.
+    s.turnNumber += 8;
+    const offer = { ...(first as { offer: Omit<import('../src/engine/types').TradeOffer, 'from'> }).offer, from: 0 };
+    expect(g.recentlyOffered(offer)).toBe(false);
+  });
+
   it('боты доигрывают партию до конца без ошибок', () => {
     for (let seed = 1; seed <= 30; seed++) {
       const g = Game.create(
