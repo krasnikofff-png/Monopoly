@@ -2489,3 +2489,120 @@ button {
   gap: 10px;
   flex-shrink: 0;
 }
+
+/* ——— Характеры ботов ——— */
+.persona-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  border: 2px solid var(--line);
+  background: #fff;
+  border-radius: 10px;
+  padding: 4px 8px;
+  color: var(--ink);
+}
+.persona-pick .pe {
+  font-size: 22px;
+  line-height: 1;
+}
+.persona-pick .pn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.persona-pick b {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.persona-pick small {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.persona-pick i {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 12px;
+}
+.plist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.popt {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  text-align: left;
+  border: 2px solid var(--line);
+  background: #fff;
+  border-radius: 14px;
+  padding: 10px;
+  color: var(--ink);
+}
+.popt.sel {
+  border-color: var(--pc);
+  background: color-mix(in srgb, var(--pc) 10%, #fff);
+}
+.popt .pe {
+  font-size: 30px;
+  line-height: 1.1;
+}
+.popt .pb {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.popt .ph {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.popt .ph b {
+  font-size: 15px;
+}
+.popt .lv {
+  font-style: normal;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+.popt .lv1 {
+  color: var(--green);
+}
+.popt .lv2 {
+  color: #d08a00;
+}
+.popt .lv3 {
+  color: #d63a4f;
+}
+.popt .pt {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.popt .pt i {
+  font-weight: 500;
+}
+.popt .pa {
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--ink);
+}
+.modal .hint {
+  flex-shrink: 0;
+}
+.setup-row .kind.bot {
+  width: 44px;
+  font-size: 20px;
+  padding: 6px 0;
+}

@@ -1,6 +1,7 @@
 import { BOARD, GROUP_COLORS, JAIL_FINE, MAX_HOTELS, MAX_HOUSES, START_BONUS, STATION_RENT, UTILITY_MULT, groupCells, isOwnable } from '../data/board';
 import { CARD_BY_ID } from '../data/cards';
-import { botDecide, tradeGain } from '../engine/bot';
+import { botAcceptsTrade, botDecide } from '../engine/bot';
+import { DEFAULT_PERSONA, LEVEL_NAMES, PERSONAS, getPersona } from '../engine/personas';
 import { iconSvg, installIcons } from './icons';
 import { TOKEN_NAMES, normalizeToken, tokenSvg } from './tokens';
 import { randomSeed } from '../engine/rng';
@@ -20,6 +21,8 @@ interface SetupRow {
   isBot: boolean;
   /** Выбранная фишка (car, hat, dog…). */
   token?: string;
+  /** Характер бота. */
+  style?: string;
 }
 
 /** Черновик предложения обмена, который собирает игрок. */
@@ -370,16 +373,35 @@ export class App {
     try {
       const raw = localStorage.getItem(SETUP_KEY);
       const rows = raw ? (JSON.parse(raw) as SetupRow[]) : null;
-      if (rows && rows.length >= 2 && rows.length <= 6) return this.fixTokens(rows);
+      if (rows && rows.length >= 2 && rows.length <= 6) return this.fixPersonas(this.fixTokens(rows));
     } catch {
       /* настройки по умолчанию */
     }
-    return this.fixTokens([
-      { name: 'Игрок', isBot: false },
-      { name: 'Олег', isBot: true },
-      { name: 'Марина', isBot: true },
-      { name: 'Тимур', isBot: true },
-    ]);
+    return this.fixPersonas(
+      this.fixTokens([
+        { name: 'Игрок', isBot: false },
+        { name: '', isBot: true, style: 'petya' },
+        { name: '', isBot: true, style: 'mikhalych' },
+        { name: '', isBot: true, style: 'professor' },
+      ]),
+    );
+  }
+
+  /** У каждого бота свой характер (без повторов), и зовут бота по характеру. */
+  private fixPersonas(rows: SetupRow[]): SetupRow[] {
+    const used = new Set<string>();
+    for (const r of rows) {
+      if (!r.isBot) {
+        delete r.style;
+        continue;
+      }
+      if (!r.style || used.has(r.style) || !PERSONAS.some((p) => p.id === r.style)) {
+        r.style = PERSONAS.find((p) => !used.has(p.id) && !rows.some((o) => o !== r && o.style === p.id))?.id ?? DEFAULT_PERSONA;
+      }
+      used.add(r.style);
+      r.name = getPersona(r.style).short;
+    }
+    return rows;
   }
 
   /** У каждого игрока своя фишка: пустые и повторы заменяются свободными. */
@@ -413,8 +435,18 @@ export class App {
               .map(
                 (r, i) => `<div class="setup-row" style="--pc:${PLAYER_COLORS[i]}">
                 <button class="tok tokpick" data-act="pickToken" data-id="${i}" aria-label="Выбрать фишку">${tokenSvg(r.token ?? PLAYER_TOKENS[i], PLAYER_COLORS[i])}<i>▾</i></button>
-                <input data-name="${i}" maxlength="12" value="${esc(r.name)}" />
-                <button class="kind ${r.isBot ? 'bot' : 'human'}" data-act="toggleKind" data-id="${i}">${r.isBot ? '🤖 Бот' : '🙂 Человек'}</button>
+                ${
+                  r.isBot
+                    ? (() => {
+                        const ps = getPersona(r.style);
+                        return `<button class="persona-pick" data-act="pickPersona" data-id="${i}">
+                          <span class="pe">${ps.emoji}</span>
+                          <span class="pn"><b>${esc(ps.short)}</b><small>${esc(ps.title)} · ${LEVEL_NAMES[ps.level]}</small></span><i>▾</i>
+                        </button>`;
+                      })()
+                    : `<input data-name="${i}" maxlength="12" value="${esc(r.name)}" />`
+                }
+                <button class="kind ${r.isBot ? 'bot' : 'human'}" data-act="toggleKind" data-id="${i}" aria-label="${r.isBot ? 'Бот — сделать человеком' : 'Человек — сделать ботом'}">${r.isBot ? '🤖' : '🙂 Человек'}</button>
                 <button class="del" data-act="removePlayer" data-id="${i}" ${rows.length <= 2 ? 'disabled' : ''}>✕</button>
               </div>`,
               )
@@ -447,7 +479,8 @@ export class App {
     this.setup = this.fixTokens(rows);
     this.saveSetup();
     // Жеребьёвка: порядок ходов случайный, у каждого свои фишка и цвет.
-    const people = rows.map((r, i) => ({ name: r.name, isBot: r.isBot, color: PLAYER_COLORS[i], token: r.token! }));
+    this.fixPersonas(rows);
+    const people = rows.map((r, i) => ({ name: r.name, isBot: r.isBot, color: PLAYER_COLORS[i], token: r.token!, style: r.style }));
     for (let i = people.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [people[i], people[j]] = [people[j], people[i]];
@@ -514,6 +547,23 @@ export class App {
           return `<button class="tokopt ${mine ? 'sel' : ''}" data-act="setToken" data-id="${row}" data-tok="${t}" style="--pc:${PLAYER_COLORS[row]}">
             ${tokenSvg(t, PLAYER_COLORS[row])}<span>${TOKEN_NAMES[t as keyof typeof TOKEN_NAMES]}</span>
             ${owner >= 0 && !mine ? `<i>у «${esc(this.setup[owner].name)}» — поменяетесь</i>` : ''}
+          </button>`;
+        }).join('')}</div>
+        <button class="btn ghost" data-act="close">Отмена</button>`;
+    } else if (this.modal.startsWith('persona:')) {
+      const row = Number(this.modal.slice(8));
+      body = `<h3>Выберите соперника</h3>
+        <div class="hint">У каждого бота свой характер. Сложность: ● лёгкий, ●● средний, ●●● сложный.</div>
+        <div class="plist">${PERSONAS.map((ps) => {
+          const owner = this.setup.findIndex((r) => r.isBot && r.style === ps.id);
+          const mine = owner === row;
+          return `<button class="popt ${mine ? 'sel' : ''}" data-act="setPersona" data-id="${row}" data-style="${ps.id}" style="--pc:${PLAYER_COLORS[row]}">
+            <span class="pe">${ps.emoji}</span>
+            <span class="pb">
+              <span class="ph"><b>${esc(ps.name)}</b><em class="lv lv${ps.level}">${'●'.repeat(ps.level)}${'○'.repeat(3 - ps.level)}</em></span>
+              <span class="pt">${esc(ps.title)}${owner >= 0 && !mine ? ' · <i>уже в игре — поменяются местами</i>' : ''}</span>
+              <span class="pa">${esc(ps.about)}</span>
+            </span>
           </button>`;
         }).join('')}</div>
         <button class="btn ghost" data-act="close">Отмена</button>`;
@@ -967,7 +1017,7 @@ export class App {
       case 'playAgain':
         // Те же игроки, фишки и роли, что в закончившейся партии.
         if (this.game) {
-          this.setup = this.game.state.players.map((p) => ({ name: p.name, isBot: p.isBot, token: p.token }));
+          this.setup = this.game.state.players.map((p) => ({ name: p.name, isBot: p.isBot, token: p.token, style: p.style }));
           this.fixTokens(this.setup);
         }
         this.modal = null;
@@ -975,6 +1025,19 @@ export class App {
         this.gameId = null;
         this.startNew();
         return;
+      case 'pickPersona':
+        this.modal = `persona:${cell}`;
+        return this.renderMenu();
+      case 'setPersona': {
+        const id = t.dataset.style!;
+        const other = this.setup.findIndex((r) => r.isBot && r.style === id);
+        if (other >= 0 && other !== cell) this.setup[other].style = this.setup[cell].style;
+        this.setup[cell].style = id;
+        this.fixPersonas(this.setup);
+        this.saveSetup();
+        this.modal = null;
+        return this.renderMenu();
+      }
       case 'pickToken':
         this.modal = `token:${cell}`;
         return this.renderMenu();
@@ -987,10 +1050,14 @@ export class App {
         this.modal = null;
         return this.renderMenu();
       }
-      case 'toggleKind':
-        this.setup[cell].isBot = !this.setup[cell].isBot;
+      case 'toggleKind': {
+        const r = this.setup[cell];
+        r.isBot = !r.isBot;
+        if (!r.isBot) r.name = `Игрок ${cell + 1}`;
+        this.fixPersonas(this.setup);
         this.saveSetup();
         return this.renderMenu();
+      }
       case 'removePlayer':
         if (this.setup.length > 2) this.setup.splice(cell, 1);
         this.saveSetup();
@@ -1001,6 +1068,7 @@ export class App {
         const name = botNames.find((n) => !used.has(n)) ?? `Игрок ${this.setup.length + 1}`;
         if (this.setup.length < 6) this.setup.push({ name, isBot: true });
         this.fixTokens(this.setup);
+        this.fixPersonas(this.setup);
         this.saveSetup();
         return this.renderMenu();
       }
@@ -2146,7 +2214,7 @@ export class App {
     const isTransfer = noCells && d.giveMoney > 0 && !d.getMoney;
     let hint = '';
     if (partner.isBot && !empty && !isTransfer) {
-      const gain = tradeGain(game, d.to, {
+      const gain = botAcceptsTrade(game, d.to, {
         from: d.from,
         to: d.to,
         giveCells: d.give,
@@ -2154,8 +2222,8 @@ export class App {
         giveMoney: d.giveMoney,
         getMoney: d.getMoney,
       });
-      hint = `<div class="thint ${gain > 0 ? 'ok' : 'no'}">${
-        gain > 0 ? `${esc(partner.name)}, похоже, согласится 👍` : `${esc(partner.name)}, скорее всего, откажется 👎`
+      hint = `<div class="thint ${gain ? 'ok' : 'no'}">${
+        gain ? `${esc(partner.name)}, похоже, согласится 👍` : `${esc(partner.name)}, скорее всего, откажется 👎`
       }</div>`;
     }
     return `<h3>🤝 Обмен и переводы</h3>${pick}

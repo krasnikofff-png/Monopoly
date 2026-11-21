@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BOARD, START_BONUS, START_MONEY } from '../src/data/board';
 import { botDecide } from '../src/engine/bot';
+import { PERSONAS } from '../src/engine/personas';
 import { Game } from '../src/engine/game';
 import { restoredDavidYana } from '../src/ui/restore';
 import { exportCode, importCode } from '../src/ui/store';
@@ -389,6 +390,49 @@ describe('Игровой движок', () => {
     expect(g.state.stats!.out[0].rent).toBe(rent);
     expect(g.state.stats!.in[1].rent).toBe(rent);
     expect(g.state.stats!.count[0].rentTimes).toBe(1);
+  });
+
+  it('боты с разными характерами доигрывают партию, характер сохраняется в партии', () => {
+    const ids = PERSONAS.map((p) => p.id);
+    ids.forEach((id, i) => {
+      const trio = [id, ids[(i + 2) % ids.length], ids[(i + 4) % ids.length]];
+      const g = Game.create(trio.map((style) => ({ name: style, isBot: true, style })), 100 + i);
+      expect(g.state.players.map((p) => p.style)).toEqual(trio);
+      let steps = 0;
+      while (g.state.phase !== 'gameover' && steps < 30000) {
+        const a = g.actor();
+        const action = botDecide(g, a);
+        expect(action).not.toBeNull();
+        g.dispatch(a, action!);
+        steps++;
+      }
+      expect(g.state.phase).toBe('gameover');
+    });
+  });
+
+  it('Петя не предлагает обменов, а Лёва торгуется и после отказа добавляет', () => {
+    const g = twoPlayers();
+    const s = g.state;
+    s.players[1].style = 'leva';
+    // У Лёвы одна коричневая улица, вторая — у человека.
+    const brown = BOARD.filter((c) => c.group === 'brown').map((c) => c.id);
+    s.cells[brown[0]].owner = 1;
+    s.cells[brown[1]].owner = 0;
+    s.current = 1;
+    s.phase = 'roll';
+    const first = botDecide(g, 1);
+    expect(first?.type).toBe('proposeTrade');
+    g.dispatch(1, first!);
+    g.dispatch(0, { type: 'rejectTrade' });
+    const second = botDecide(g, 1);
+    expect(second?.type).toBe('proposeTrade');
+    if (first?.type === 'proposeTrade' && second?.type === 'proposeTrade') {
+      expect(second.offer.giveMoney).toBeGreaterThan(first.offer.giveMoney);
+    }
+    s.players[1].style = 'petya';
+    s.phase = 'roll';
+    s.tradesThisTurn = 0;
+    expect(botDecide(g, 1)?.type).not.toBe('proposeTrade');
   });
 
   it('боты доигрывают партию до конца без ошибок', () => {

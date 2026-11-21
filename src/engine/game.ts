@@ -98,6 +98,7 @@ export class Game {
       color: s.color ?? PLAYER_COLORS[i],
       token: s.token ?? PLAYER_TOKENS[i],
       isBot: s.isBot,
+      ...(s.isBot && s.style ? { style: s.style } : {}),
       money: START_MONEY,
       position: 0,
       inJail: false,

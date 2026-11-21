@@ -70,6 +70,8 @@ export interface Player {
   /** Колоды, из которых у игрока есть карточка «Выйти из тюрьмы». */
   jailFreeCards: DeckId[];
   bankrupt: boolean;
+  /** Характер бота (см. personas.ts). */
+  style?: string;
 }
 
 export interface OwnedCell {
@@ -260,4 +262,5 @@ export interface PlayerSetup {
   isBot: boolean;
   color?: string;
   token?: string;
+  style?: string;
 }
