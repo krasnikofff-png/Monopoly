@@ -169,6 +169,10 @@ export class GameStore {
   private db: Db | null = null;
   /** Облака на этом устройстве нет совсем (use('db') ответил null). */
   private noCloud = false;
+  /** Облака Claude здесь нет совсем (игра открыта как сайт или файл) — партии живут на устройстве. */
+  get deviceOnly(): boolean {
+    return this.noCloud;
+  }
   private queue = new Map<string, QueueItem>();
   /** Счётчик сохранений каждой партии (известный этому устройству). */
   private revs = new Map<string, number>();

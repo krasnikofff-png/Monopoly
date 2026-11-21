@@ -357,6 +357,7 @@ export class App {
       case 'cloud':
         return `☁ Сохранено в облаке${t(st.at) ? `, ${t(st.at)}` : ''}`;
       case 'local':
+        if (this.store.deviceOnly) return '📱 Партия сохраняется на этом устройстве. Чтобы продолжить на другом — «Код партии».';
         return '⚠ Облако недоступно — партия сохраняется только на этом устройстве. Скопируйте код партии на всякий случай.';
       case 'error':
         return st.fatal
@@ -1375,8 +1376,11 @@ export class App {
     const s = game.state;
     const sum = s.dice ? s.dice[0] + s.dice[1] : null;
     // Запоминаем, где были фишки, чтобы анимировать перелёт (FLIP).
-    const prev = new Map<string, DOMRect>();
-    this.root.querySelectorAll<HTMLElement>('[data-tok]').forEach((el) => prev.set(el.dataset.tok!, el.getBoundingClientRect()));
+    // Где стояли фишки до перерисовки: клетка и место на экране.
+    const prev = new Map<string, { rect: DOMRect; cell: string | undefined }>();
+    this.root.querySelectorAll<HTMLElement>('[data-tok]').forEach((el) =>
+      prev.set(el.dataset.tok!, { rect: el.getBoundingClientRect(), cell: el.closest<HTMLElement>('[data-cell]')?.dataset.cell }),
+    );
     const scrolls = this.saveScrolls();
     const handoff = this.needsHandoff();
     const modalKey = handoff ? `handoff:${game.actor()}` : this.modal;
@@ -1426,8 +1430,11 @@ export class App {
       this.root.querySelector('.chip.active')?.classList.add('enter');
     }
     this.root.querySelectorAll<HTMLElement>('[data-tok]').forEach((el) => {
-      const a = prev.get(el.dataset.tok!);
-      if (!a) return;
+      const was = prev.get(el.dataset.tok!);
+      // Прыгает только фишка, которая перешла на другую клетку. Остальные стоят на месте,
+      // даже если экран перерисовался (например, пока крутятся кубики).
+      if (!was || was.cell === el.closest<HTMLElement>('[data-cell]')?.dataset.cell) return;
+      const a = was.rect;
       const b = el.getBoundingClientRect();
       const dx = a.left - b.left;
       const dy = a.top - b.top;
@@ -1785,7 +1792,7 @@ export class App {
     } else if (this.modal === 'settings') {
       const tg = (on: boolean) => `<span class="toggle ${on ? 'on' : ''}"><i></i></span>`;
       body = `<h3>Настройки</h3>
-        <div class="savestat ${this.store.status.kind}">${esc(this.statusText())}</div>
+        <div class="savestat ${this.store.status.kind === 'local' && this.store.deviceOnly ? 'device' : this.store.status.kind}">${esc(this.statusText())}</div>
         <button class="setting" data-act="toggleSound"><span>Звук</span>${tg(this.prefs.sound)}</button>
         <button class="setting" data-act="toggleVibro"><span>Вибрация</span>${tg(this.prefs.vibrate)}</button>
         <button class="setting" data-act="toggleUnlimited"><span>Дома без лимита<small>домашнее правило: в банке не кончаются дома и отели (сейчас ${this.game ? `в банке ${this.game.state.housesLeft} домов, ${this.game.state.hotelsLeft} отелей` : '—'})</small></span>${tg(!!this.game?.state.rules?.unlimitedHouses)}</button>
