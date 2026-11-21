@@ -1,3 +1,4 @@
+import './ui/fonts.css';
 import './ui/styles.css';
 import { App } from './ui/app';
 import type { GameState } from './engine/types';
@@ -23,3 +24,12 @@ function start(data: Snapshot = {}): void {
 
 if (hot?.ready) hot.ready(start);
 else start(hot?.data ?? {});
+
+// Игра без интернета: на своём сайте (не внутри claude.ai) ставим сервис-воркер.
+if (import.meta.env.PROD && 'serviceWorker' in navigator && document.querySelector('link[rel="manifest"]') && location.protocol !== 'file:') {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {
+      /* без офлайна — игра всё равно работает */
+    });
+  });
+}
