@@ -903,9 +903,14 @@ export class App {
     this.sfx('dice');
     this.vib(25);
     this.rolling = true;
+    this.render();
+    // Пока кубики крутятся, меняем только их грани — без перерисовки всего экрана
+    // (полная перерисовка тяжёлая, а на телефоне это лишняя нагрузка на память и процессор).
+    const dieEls = [...this.root.querySelectorAll<HTMLElement>('.die')];
     for (let i = 0; i < 8; i++) {
       this.diceShown = [1 + Math.floor(Math.random() * 6), 1 + Math.floor(Math.random() * 6)];
-      this.render();
+      if (dieEls.length === 2 && dieEls.every((d) => d.isConnected)) dieEls.forEach((d, k) => (d.innerHTML = pips(this.diceShown[k])));
+      else this.render();
       await sleep(65);
     }
     this.rolling = false;
@@ -950,13 +955,38 @@ export class App {
       if (gen !== this.gen) return;
       pos = (pos + dir + 40) % 40;
       this.shownPos[player] = pos;
-      this.render();
+      this.stepToken(player, pos);
       this.sfx('step');
       this.vib(8);
       await sleep(STEP_MS);
     }
+    this.render();
     this.sfx('land');
     await sleep(160);
+  }
+
+  /** Один шаг фишки: переносим только её саму на соседнюю клетку и подпрыгиваем — без перерисовки экрана. */
+  private stepToken(player: number, pos: number): void {
+    const el = this.root.querySelector<HTMLElement>(`[data-tok="${player}"]`);
+    const target = this.root.querySelector<HTMLElement>(`[data-cell="${pos}"] .tokens`);
+    if (!el || !target) return this.render();
+    const from = el.parentElement;
+    const a = el.getBoundingClientRect();
+    target.appendChild(el);
+    for (const box of [from, target]) if (box) box.className = `tokens n${Math.min(box.children.length, 6)}`;
+    const b = el.getBoundingClientRect();
+    const dx = a.left - b.left;
+    const dy = a.top - b.top;
+    const lift = Math.min(46, 16 + Math.hypot(dx, dy) * 0.2);
+    el.animate(
+      [
+        { transform: `translate(${dx}px, ${dy}px)` },
+        { transform: `translate(${dx / 2}px, ${dy / 2 - lift}px) scale(1.15)`, offset: 0.5 },
+        { transform: 'translate(0, 0) scale(1.2, 0.8)', offset: 0.82 },
+        { transform: 'none' },
+      ],
+      { duration: this.hopMs, easing: 'ease-in-out' },
+    );
   }
 
   private modalResolve: (() => void) | null = null;
@@ -1854,7 +1884,8 @@ export class App {
         <button class="btn blue" data-act="history">Вернуть партию назад</button>
         <button class="btn blue" data-act="showCode">Код партии (резервная копия)</button>
         <button class="btn red" data-act="menu">Выйти в главное меню</button>
-        <button class="btn ghost" data-act="close">Закрыть</button>`;
+        <button class="btn ghost" data-act="close">Закрыть</button>
+        ${this.lastErrorHtml()}`;
     } else if (this.modal === 'conflict') {
       body = `<h3>Есть более новая версия</h3>
         <div class="msg">${esc(this.statusText())}</div>
@@ -2009,6 +2040,21 @@ export class App {
         <button class="btn yellow" data-act="rejectTrade">Отклонить</button>
         <button class="btn green" data-act="acceptTrade">Принять</button>
       </div>`;
+  }
+
+  /** Последняя ошибка игры (если была) — чтобы её можно было прислать разработчику. */
+  private lastErrorHtml(): string {
+    let e = '';
+    try {
+      e = localStorage.getItem('mm-last-error') ?? '';
+    } catch {
+      /* ignore */
+    }
+    if (!e) return '';
+    const [at, ...msg] = e.split(' ');
+    const when = new Date(at);
+    const t = isNaN(when.getTime()) ? '' : when.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return `<div class="lasterr">Последняя ошибка${t ? ` (${t})` : ''}: ${esc(msg.join(' '))}</div>`;
   }
 
   /** Поздравительное окно в конце партии. */
