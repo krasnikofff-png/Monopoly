@@ -21,6 +21,12 @@ const gameKey = (id: string) => `mm-game-v2-${id}`;
 const turnsKey = (id: string) => `mm-turns-v2-${id}`;
 // Старое сохранение одной партии в памяти браузера (до списка партий).
 const LEGACY_LOCAL_KEY = 'moskva-magnat-save-v1';
+/** Какая партия была открыта последней — чтобы после вылета вернуться прямо в неё. */
+const LAST_KEY = 'mm-last-open';
+/** Снимков ходов на устройстве (в облаке — TURN_SLOTS): память телефона не резиновая. */
+const LOCAL_TURNS = 12;
+/** Код ошибки «не хватает памяти устройства». */
+export const DEVICE_FULL = 'память устройства заполнена';
 /** Ошибки, которые повтором не исправить. */
 const FATAL_CODES = ['invalid_argument', 'quota_exceeded', 'revoked', 'not_granted', 'permission_denied'];
 
@@ -134,12 +140,26 @@ function lsGet(key: string): string | null {
   }
 }
 
-function lsSet(key: string, value: string): void {
+function lsSet(key: string, value: string): boolean {
   try {
     localStorage.setItem(key, value);
+    return true;
   } catch {
-    /* память браузера недоступна или переполнена */
+    return false; // память браузера недоступна или переполнена
   }
+}
+
+function lsKeys(prefix: string): string[] {
+  const keys: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(prefix)) keys.push(k);
+    }
+  } catch {
+    /* ignore */
+  }
+  return keys;
 }
 
 function lsRemove(key: string): void {
@@ -169,6 +189,8 @@ export class GameStore {
   private db: Db | null = null;
   /** Облака на этом устройстве нет совсем (use('db') ответил null). */
   private noCloud = false;
+  /** Последняя запись партии в память устройства не удалась даже после уборки. */
+  private localFail = false;
   /** Облака Claude здесь нет совсем (игра открыта как сайт или файл) — партии живут на устройстве. */
   get deviceOnly(): boolean {
     return this.noCloud;
@@ -187,6 +209,7 @@ export class GameStore {
   private running = false;
 
   constructor() {
+    this.tidy();
     const c = (window as unknown as { claude?: ClaudeGlobal }).claude;
     this.dbPromise = c?.use ? (c.use('db') as Promise<Db | null>).catch(() => null) : Promise.resolve(null);
     void this.dbPromise.then((db) => {
@@ -253,11 +276,18 @@ export class GameStore {
       finished: state.phase === 'gameover',
     };
 
-    // 1. Память браузера — сразу.
-    lsSet(gameKey(id), JSON.stringify({ json, savedAt: now, rev, undo: undoJson } satisfies StoredLocal));
+    // 1. Память браузера — сразу. Не влезло — убираем старое и пробуем ещё раз.
     const index = this.localIndex().filter((m) => m.id !== id);
     index.unshift({ id, ...meta, where: 'local' });
-    lsSet(INDEX_KEY, JSON.stringify(index.slice(0, 60)));
+    const ok =
+      this.writeLocal(gameKey(id), JSON.stringify({ json, savedAt: now, rev, undo: undoJson } satisfies StoredLocal), id) &&
+      this.writeLocal(INDEX_KEY, JSON.stringify(index.slice(0, 60)), id);
+    if (ok !== !this.localFail) {
+      this.localFail = !ok;
+      if (this.noCloud) this.setStatus(ok ? { kind: 'local', at: now } : { kind: 'error', at: now, code: DEVICE_FULL, fatal: true });
+    }
+    if (ok && state.phase !== 'gameover') lsSet(LAST_KEY, id);
+    else if (state.phase === 'gameover' && lsGet(LAST_KEY) === id) lsRemove(LAST_KEY);
 
     // 2. Облако — пакетом (если пришло новее до записи — пишется только новое).
     this.queue.set(`games/${id}`, { op: 'set', data: { ...meta, json, undo: undoJson }, gameId: id });
@@ -272,7 +302,7 @@ export class GameStore {
         const turns = JSON.parse(lsGet(turnsKey(id)) ?? '[]') as { turn: number; savedAt: string; json: string }[];
         const next = turns.filter((t) => t.turn !== state.turnNumber);
         next.push({ turn: state.turnNumber, savedAt: now, json: snap });
-        lsSet(turnsKey(id), JSON.stringify(next.slice(-TURN_SLOTS)));
+        lsSet(turnsKey(id), JSON.stringify(next.slice(-LOCAL_TURNS)));
       } catch {
         /* ignore */
       }
@@ -300,7 +330,8 @@ export class GameStore {
       if (!db) {
         if (this.noCloud) {
           this.queue.clear(); // облака нет совсем — всё уже лежит в памяти браузера
-          this.setStatus({ kind: 'local', at: new Date().toISOString() });
+          const at = new Date().toISOString();
+          this.setStatus(this.localFail ? { kind: 'error', at, code: DEVICE_FULL, fatal: true } : { kind: 'local', at });
         } else {
           this.setStatus({ kind: 'error', at: new Date().toISOString(), code: 'нет связи с облаком' });
           this.retryLater();
@@ -509,6 +540,98 @@ export class GameStore {
       }
     }
     return [...byTurn.values()].sort((a, b) => b.turn - a.turn);
+  }
+
+  /** Последняя открытая незаконченная партия (или null). */
+  lastOpen(): string | null {
+    const id = lsGet(LAST_KEY);
+    if (!id) return null;
+    const m = this.localIndex().find((g) => g.id === id);
+    return m && !m.finished ? id : null;
+  }
+
+  /** Игрок сам вышел в меню — при следующем запуске показываем меню, а не партию. */
+  forgetLast(): void {
+    lsRemove(LAST_KEY);
+  }
+
+  /** Запись в память устройства; если не влезло — уборка и вторая попытка. */
+  private writeLocal(key: string, value: string, keepId: string): boolean {
+    if (lsSet(key, value)) return true;
+    for (let level = 1; level <= 3; level++) {
+      this.freeSpace(keepId, level);
+      if (lsSet(key, value)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Освобождает память устройства, от наименее нужного к более нужному:
+   * 1 — история ходов других партий; 2 — данные убранных и законченных партий;
+   * 3 — история ходов этой партии и самые старые партии (кроме 8 последних).
+   */
+  private freeSpace(keepId: string, level: number): void {
+    const index = this.localIndex();
+    const idOf = (key: string, prefix: string) => key.slice(prefix.length);
+    if (level >= 1) {
+      for (const k of lsKeys('mm-turns-v2-')) if (idOf(k, 'mm-turns-v2-') !== keepId) lsRemove(k);
+    }
+    if (level >= 2) {
+      const alive = new Set(index.filter((m) => !m.finished).map((m) => m.id));
+      for (const k of lsKeys('mm-game-v2-')) {
+        const id = idOf(k, 'mm-game-v2-');
+        if (id !== keepId && !alive.has(id)) lsRemove(k);
+      }
+    }
+    if (level >= 3) {
+      lsRemove(turnsKey(keepId));
+      const keep = new Set(index.filter((m) => !m.finished).slice(0, 8).map((m) => m.id));
+      keep.add(keepId);
+      for (const k of lsKeys('mm-game-v2-')) if (!keep.has(idOf(k, 'mm-game-v2-'))) lsRemove(k);
+    }
+  }
+
+  /** Уборка при запуске: история ходов только у трёх последних партий, без мусора от удалённых. */
+  private tidy(): void {
+    const index = this.localIndex();
+    const recent = new Set(index.filter((m) => !m.finished).slice(0, 3).map((m) => m.id));
+    for (const k of lsKeys('mm-turns-v2-')) if (!recent.has(k.slice('mm-turns-v2-'.length))) lsRemove(k);
+    for (const k of lsKeys('mm-turns-v2-')) {
+      try {
+        const turns = JSON.parse(lsGet(k) ?? '[]') as unknown[];
+        if (Array.isArray(turns) && turns.length > LOCAL_TURNS) lsSet(k, JSON.stringify(turns.slice(-LOCAL_TURNS)));
+      } catch {
+        lsRemove(k);
+      }
+    }
+    // Партия есть в памяти, но выпала из списка (например, список не записался) — возвращаем её в список.
+    const known = new Set(index.map((m) => m.id));
+    let changed = false;
+    for (const k of lsKeys('mm-game-v2-')) {
+      const id = k.slice('mm-game-v2-'.length);
+      if (known.has(id)) continue;
+      try {
+        const l = JSON.parse(lsGet(k) ?? '') as StoredLocal;
+        const st = parseState(l.json);
+        if (!st) continue;
+        index.push({
+          id,
+          savedAt: l.savedAt,
+          rev: Number(l.rev ?? 0),
+          turn: st.turnNumber,
+          players: playersOf(st),
+          finished: st.phase === 'gameover',
+          where: 'local',
+        });
+        changed = true;
+      } catch {
+        /* повреждённая запись — не трогаем */
+      }
+    }
+    if (changed) {
+      index.sort((a, b) => (a.savedAt < b.savedAt ? 1 : -1));
+      lsSet(INDEX_KEY, JSON.stringify(index.slice(0, 60)));
+    }
   }
 
   /** Убрать партию из списка (данные остаются, партия помечается завершённой). */

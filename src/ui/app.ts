@@ -6,7 +6,7 @@ import { iconSvg, installIcons } from './icons';
 import { TOKEN_NAMES, normalizeToken, tokenSvg } from './tokens';
 import { randomSeed } from '../engine/rng';
 import { Sound, type SoundName } from './sound';
-import { GameStore, TURN_SLOTS, exportCode, importCode, newGameId, type GameMeta, type TurnSnap } from './store';
+import { DEVICE_FULL, GameStore, TURN_SLOTS, exportCode, importCode, newGameId, type GameMeta, type TurnSnap } from './store';
 import { confetti, floatText, flyCoins, shake, tweenNumber } from './fx';
 import { Game, GameError, MAX_COUNTERS, PLAYER_COLORS, PLAYER_TOKENS, formatMoney } from '../engine/game';
 import type { Action, ColorGroup, FlowKind, GameEvent, GameState, StatCounter } from '../engine/types';
@@ -316,6 +316,9 @@ export class App {
       this.save();
     } else {
       this.renderMenu();
+      // Игра вылетела или телефон её выгрузил — сразу возвращаемся в незаконченную партию.
+      const last = this.store.lastOpen();
+      if (last) this.openSaved(last, true);
     }
     void this.refreshGames();
   }
@@ -337,7 +340,7 @@ export class App {
   private onSaveStatus(): void {
     const st = this.store.status;
     if (st.kind === 'error' && this.lastStatusKind !== 'error') {
-      this.showMenuToast(st.fatal ? '⚠ Облако отклонило сохранение. Сохраните код партии в меню ☰' : '⚠ Не удалось сохранить в облако — пробую снова');
+      this.showMenuToast(st.code === DEVICE_FULL ? '⚠ Память телефона заполнена — сохраните код партии в меню ☰' : st.fatal ? '⚠ Облако отклонило сохранение. Сохраните код партии в меню ☰' : '⚠ Не удалось сохранить в облако — пробую снова');
     }
     if (st.kind === 'conflict' && this.lastStatusKind !== 'conflict') {
       this.modal = 'conflict';
@@ -362,6 +365,7 @@ export class App {
         if (this.store.deviceOnly) return '📱 Партия сохраняется на этом устройстве. Чтобы продолжить на другом — «Код партии».';
         return '⚠ Облако недоступно — партия сохраняется только на этом устройстве. Скопируйте код партии на всякий случай.';
       case 'error':
+        if (st.code === DEVICE_FULL) return '⚠ Память телефона заполнена — последние ходы могли не сохраниться. Скопируйте код партии (ниже) на всякий случай.';
         return st.fatal
           ? `⚠ Облако отклонило сохранение${st.code ? ` (${st.code})` : ''}. Партия сохраняется на этом телефоне — сохраните код партии.`
           : `⚠ Последнее сохранение не дошло до облака${st.code ? ` (${st.code})` : ''}${t(st.at) ? `, ${t(st.at)}` : ''}. Повторяю автоматически.`;
@@ -493,6 +497,25 @@ export class App {
     this.save();
     this.modal = 'order';
     this.render();
+  }
+
+  /** Открыть сохранённую партию (из списка или сама, после перезапуска игры). */
+  private openSaved(gid: string, quiet = false): void {
+    if (!quiet) this.showMenuToast('Открываем партию…');
+    void this.store.load(gid).then((r) => {
+      if (this.game) return; // пока грузили, уже открыли другую
+      if (!r) {
+        if (!quiet) this.showMenuToast('Не удалось открыть партию. Проверьте интернет и попробуйте ещё раз.');
+        return;
+      }
+      if (r.state.phase === 'gameover' && quiet) return;
+      this.store.opened(gid, r.state, r.rev);
+      this.startGame(new Game(r.state), gid);
+      this.undo = r.undo;
+      this.render();
+      if (quiet) this.showToast('Продолжаем партию с того же места');
+      else if (r.cloudUnchecked) this.showToast('⚠ Облако не ответило — открыта версия с этого телефона');
+    });
   }
 
   private startGame(game: Game, id: string): void {
@@ -1161,19 +1184,9 @@ export class App {
         void this.act(me, { type: 'proposeTrade', offer });
         return;
       }
-      case 'continue': {
-        const gid = t.dataset.gid!;
-        this.showMenuToast('Открываем партию…');
-        void this.store.load(gid).then((r) => {
-          if (!r) return this.showMenuToast('Не удалось открыть партию. Проверьте интернет и попробуйте ещё раз.');
-          this.store.opened(gid, r.state, r.rev);
-          this.startGame(new Game(r.state), gid);
-          this.undo = r.undo;
-          this.render();
-          if (r.cloudUnchecked) this.showToast('⚠ Облако не ответило — открыта версия с этого телефона');
-        });
+      case 'continue':
+        this.openSaved(t.dataset.gid!);
         return;
-      }
       case 'refreshGames':
         this.games = null;
         this.renderMenu();
@@ -1225,6 +1238,7 @@ export class App {
         return;
       }
       case 'menu':
+        this.store.forgetLast();
         if (this.botTimer !== null) clearTimeout(this.botTimer);
         this.botTimer = null;
         this.save();
