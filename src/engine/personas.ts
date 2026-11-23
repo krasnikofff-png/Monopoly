@@ -42,6 +42,11 @@ export interface Persona {
   theirWeight: number;
   /** Какую выгоду хочет получить, чтобы принять чужое предложение (может быть < 0). */
   acceptMargin: number;
+  /**
+   * Торг: сколько ₽ сверх своего минимума просит во встречном предложении (0 — не торгуется,
+   * просто соглашается или отказывается). С каждым раундом уступает.
+   */
+  haggle: number;
   /** Знает, на какие улицы чаще встают. */
   landingAware: boolean;
   /** Доля случайности в решениях (0 — полностью предсказуем). */
@@ -71,6 +76,7 @@ export const PERSONAS: Persona[] = [
     overpay: 0,
     theirWeight: 0,
     acceptMargin: -400,
+    haggle: 0,
     landingAware: false,
     noise: 0.3,
   },
@@ -96,6 +102,7 @@ export const PERSONAS: Persona[] = [
     overpay: 0,
     theirWeight: 0.8,
     acceptMargin: 0,
+    haggle: 500,
     landingAware: false,
     noise: 0,
   },
@@ -121,6 +128,7 @@ export const PERSONAS: Persona[] = [
     overpay: 0,
     theirWeight: 1.3,
     acceptMargin: 800,
+    haggle: 1000,
     landingAware: false,
     noise: 0,
   },
@@ -146,6 +154,7 @@ export const PERSONAS: Persona[] = [
     overpay: 1000,
     theirWeight: 0.6,
     acceptMargin: 0,
+    haggle: 300,
     landingAware: false,
     noise: 0,
   },
@@ -171,6 +180,7 @@ export const PERSONAS: Persona[] = [
     overpay: 0,
     theirWeight: 1.0,
     acceptMargin: 1000,
+    haggle: 2500,
     landingAware: false,
     noise: 0,
   },
@@ -196,6 +206,7 @@ export const PERSONAS: Persona[] = [
     overpay: 0,
     theirWeight: 1.0,
     acceptMargin: 0,
+    haggle: 800,
     landingAware: true,
     noise: 0,
   },
@@ -221,6 +232,7 @@ export const PERSONAS: Persona[] = [
     overpay: 500,
     theirWeight: 0.7,
     acceptMargin: 0,
+    haggle: 1200,
     landingAware: false,
     noise: 0.5,
   },

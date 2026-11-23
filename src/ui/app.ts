@@ -8,7 +8,7 @@ import { randomSeed } from '../engine/rng';
 import { Sound, type SoundName } from './sound';
 import { GameStore, TURN_SLOTS, exportCode, importCode, newGameId, type GameMeta, type TurnSnap } from './store';
 import { confetti, floatText, flyCoins, shake, tweenNumber } from './fx';
-import { Game, GameError, PLAYER_COLORS, PLAYER_TOKENS, formatMoney } from '../engine/game';
+import { Game, GameError, MAX_COUNTERS, PLAYER_COLORS, PLAYER_TOKENS, formatMoney } from '../engine/game';
 import type { Action, ColorGroup, FlowKind, GameEvent, GameState, StatCounter } from '../engine/types';
 
 type Notice = Extract<GameEvent, { kind: 'notice' }>;
@@ -33,6 +33,8 @@ interface TradeDraft {
   get: number[];
   giveMoney: number;
   getMoney: number;
+  /** Встречное предложение в торге (партнёр фиксирован, ответ на чужую сделку). */
+  counter?: boolean;
 }
 const STEP_MS = 170;
 const PREFS_KEY = 'moskva-magnat-prefs-v1';
@@ -818,6 +820,9 @@ export class App {
           shake(this.root.querySelector(`[data-chip="${e.player}"]`), 8);
           await this.showNotice({ kind: 'notice', tone: 'bad', title: 'Банкротство', text: `${game.player(e.player).name} выбывает из игры` });
           break;
+        case 'counter':
+          this.sfx('click');
+          break;
         case 'trade': {
           const o = e.offer;
           this.sfx(e.accepted ? 'deal' : 'click');
@@ -1093,6 +1098,40 @@ export class App {
       case 'transferSend': {
         if (!d || d.to < 0 || !game) return;
         const action: Action = { type: 'transfer', to: d.to, amount: d.giveMoney };
+        if (!game.can(me, action)) {
+          try {
+            game.dispatch(me, action);
+          } catch (err) {
+            if (err instanceof GameError) this.showToast(err.message);
+          }
+          return;
+        }
+        this.draft = null;
+        this.modal = null;
+        void this.act(me, action);
+        return;
+      }
+      case 'counter': {
+        const o = game?.state.trade;
+        if (!o || o.to !== me) return;
+        this.draft = {
+          from: me,
+          to: o.from,
+          give: [...o.getCells],
+          get: [...o.giveCells],
+          giveMoney: o.getMoney,
+          getMoney: o.giveMoney,
+          counter: true,
+        };
+        this.modal = 'trade';
+        return this.render();
+      }
+      case 'counterSend': {
+        if (!d || !game) return;
+        const action: Action = {
+          type: 'counterTrade',
+          offer: { to: d.to, giveCells: d.give, getCells: d.get, giveMoney: d.giveMoney, getMoney: d.getMoney },
+        };
         if (!game.can(me, action)) {
           try {
             game.dispatch(me, action);
@@ -1918,13 +1957,40 @@ export class App {
       return items.join('') || '<div class="empty">ничего</div>';
     };
     const after = me.money + o.giveMoney - o.getMoney;
-    return `<div class="why why-trade">🤝 Вам предлагают обмен</div>
-      <div class="ofrom">${tk(from)}<b>${esc(from.name)}</b> предлагает сделку</div>
+    const s = game.state;
+    const round = s.tradeRound ?? 0;
+    const prev = s.tradePrev;
+    // Что поменялось по сравнению с вашим прошлым вариантом.
+    let diff = '';
+    if (round > 0 && prev && prev.from === o.to) {
+      const moneyBefore = prev.getMoney - prev.giveMoney; // сколько вы получали раньше (− платили)
+      const moneyNow = o.giveMoney - o.getMoney;
+      const bits: string[] = [];
+      if (moneyNow !== moneyBefore) {
+        const d = moneyNow - moneyBefore;
+        bits.push(d < 0 ? `просит на ${formatMoney(-d)} больше в свою пользу` : `уступает ${formatMoney(d)}`);
+      }
+      const names = (ids: number[]) => ids.map((id) => esc(BOARD[id].short ?? BOARD[id].name)).join(', ');
+      const addGive = o.getCells.filter((id) => !prev.giveCells.includes(id));
+      const dropGive = prev.giveCells.filter((id) => !o.getCells.includes(id));
+      const addGet = o.giveCells.filter((id) => !prev.getCells.includes(id));
+      const dropGet = prev.getCells.filter((id) => !o.giveCells.includes(id));
+      if (addGive.length) bits.push(`хочет ещё: ${names(addGive)}`);
+      if (dropGive.length) bits.push(`не берёт: ${names(dropGive)}`);
+      if (addGet.length) bits.push(`добавляет: ${names(addGet)}`);
+      if (dropGet.length) bits.push(`не отдаёт: ${names(dropGet)}`);
+      diff = `<div class="tdiff">По сравнению с вашим вариантом ${esc(from.name)} ${bits.join('; ') || 'ничего не меняет'}.</div>`;
+    }
+    const canHaggle = round < MAX_COUNTERS;
+    return `<div class="why why-trade">${round > 0 ? '💬 Встречное предложение' : '🤝 Вам предлагают обмен'}</div>
+      <div class="ofrom">${tk(from)}<b>${esc(from.name)}</b> ${round > 0 ? `торгуется · раунд ${round} из ${MAX_COUNTERS}` : 'предлагает сделку'}</div>
+      ${diff}
       <div class="tcols">
         <div class="tside"><div class="ttitle">Вы получаете</div>${list(o.giveCells, o.giveMoney)}</div>
         <div class="tside"><div class="ttitle">Вы отдаёте</div>${list(o.getCells, o.getMoney)}</div>
       </div>
       <div class="hint">После сделки у вас будет ${formatMoney(after)}</div>
+      ${canHaggle ? '<button class="btn blue" data-act="counter">💬 Торговаться — предложить свои условия</button>' : '<div class="hint">Торг окончен — осталось принять или отклонить.</div>'}
       <div class="row">
         <button class="btn yellow" data-act="rejectTrade">Отклонить</button>
         <button class="btn green" data-act="acceptTrade">Принять</button>
@@ -2176,7 +2242,7 @@ export class App {
   private tradeHtml(d: TradeDraft): string {
     const game = this.game!;
     const s = game.state;
-    const partners = game.activePlayers().filter((p) => p.id !== d.from);
+    const partners = game.activePlayers().filter((p) => p.id !== d.from && (!d.counter || p.id === d.to));
     const pick = `<div class="partners">${partners
       .map(
         (p) => `<button class="partner ${d.to === p.id ? 'sel' : ''}" style="--pc:${p.color}" data-act="tradeTo" data-id="${p.id}">
@@ -2218,7 +2284,7 @@ export class App {
     const noCells = !d.give.length && !d.get.length;
     const empty = noCells && !d.giveMoney && !d.getMoney;
     // Только свои деньги, ничего взамен — это перевод: сразу, без подтверждения.
-    const isTransfer = noCells && d.giveMoney > 0 && !d.getMoney;
+    const isTransfer = !d.counter && noCells && d.giveMoney > 0 && !d.getMoney;
     let hint = '';
     if (partner.isBot && !empty && !isTransfer) {
       const gain = botAcceptsTrade(game, d.to, {
@@ -2233,21 +2299,30 @@ export class App {
         gain ? `${esc(partner.name)}, похоже, согласится 👍` : `${esc(partner.name)}, скорее всего, откажется 👎`
       }</div>`;
     }
-    return `<h3>🤝 Обмен и переводы</h3>${pick}
+    const round = s.tradeRound ?? 0;
+    return `<h3>${d.counter ? '💬 Ваши условия' : '🤝 Обмен и переводы'}</h3>${
+      d.counter
+        ? `<div class="hint">Поменяйте улицы или суммы и отправьте обратно — ${esc(partner.name)} решит: принять, отказаться или поторговаться ещё. Раунд ${round + 1} из ${MAX_COUNTERS}.</div>`
+        : pick
+    }
       <div class="tcols">
         ${side(d.from, d.give, d.giveMoney, 'give', 'Вы отдаёте')}
         ${side(d.to, d.get, d.getMoney, 'get', `${esc(partner.name)} отдаёт`)}
       </div>
       <div class="hint">${
-        isTransfer
+        d.counter
+          ? 'Улицы из групп с домами менять нельзя.'
+          : isTransfer
           ? `Получатель: ${esc(partner.name)}. Деньги придут сразу, без подтверждения.`
           : 'Чтобы просто перевести деньги — укажите сумму слева и не выбирайте улиц. Улицы из групп с домами менять нельзя.'
       }</div>
       ${hint}
       <div class="row">
-        <button class="btn ghost" data-act="close">Отмена</button>
+        <button class="btn ghost" data-act="close">${d.counter ? 'Назад' : 'Отмена'}</button>
         ${
-          isTransfer
+          d.counter
+            ? `<button class="btn green" data-act="counterSend">Отправить</button>`
+            : isTransfer
             ? `<button class="btn green" data-act="transferSend">Перевести ${formatMoney(d.giveMoney)}</button>`
             : `<button class="btn green" data-act="tradeSend" ${empty ? 'disabled' : ''}>Предложить</button>`
         }

@@ -199,6 +199,10 @@ export interface GameState {
   /** Последняя вытянутая карточка (для показа). */
   lastCard: string | null;
   trade: TradeOffer | null;
+  /** Сколько раз в этой сделке уже отвечали встречным предложением. */
+  tradeRound?: number;
+  /** Предыдущий вариант сделки (до встречного предложения) — чтобы показать, что изменилось. */
+  tradePrev?: TradeOffer | null;
   tradeResume: Phase | null;
   tradesThisTurn: number;
   /** Отклонённые предложения: ключ — кто, кому и за какие улицы; значение — лучшие отклонённые условия. */
@@ -229,6 +233,7 @@ export type Action =
   | { type: 'unmortgage'; cell: number }
   | { type: 'proposeTrade'; offer: Omit<TradeOffer, 'from'> }
   | { type: 'transfer'; to: number; amount: number }
+  | { type: 'counterTrade'; offer: Omit<TradeOffer, 'from'> }
   | { type: 'acceptTrade' }
   | { type: 'rejectTrade' }
   | { type: 'payDebt' }
@@ -254,6 +259,7 @@ export type GameEvent =
     }
   | { kind: 'build'; cell: number; houses: number }
   | { kind: 'trade'; offer: TradeOffer; accepted: boolean }
+  | { kind: 'counter'; offer: TradeOffer; prev: TradeOffer }
   | { kind: 'bankrupt'; player: number }
   | { kind: 'gameover'; winner: number | null };
 

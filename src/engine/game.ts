@@ -33,6 +33,8 @@ import type {
 export class GameError extends Error {}
 
 export const MAX_TRADES_PER_TURN = 5;
+/** Сколько раз в одной сделке можно ответить встречным предложением. */
+export const MAX_COUNTERS = 6;
 /** Сделка «кто → кому, за какие улицы»: по этому ключу помнится отказ. */
 export function dealKey(o: TradeOffer): string {
   return `${o.from}>${o.to}|${[...o.getCells].sort((a, b) => a - b).join(',')}`;
@@ -207,6 +209,8 @@ export class Game {
         return this.proposeTrade({ ...action.offer, from: playerId });
       case 'transfer':
         return this.transfer(playerId, action.to, action.amount);
+      case 'counterTrade':
+        return this.counterTrade(playerId, { ...action.offer, from: playerId });
       case 'acceptTrade':
         return this.answerTrade(true);
       case 'rejectTrade':
@@ -956,6 +960,8 @@ export class Game {
     if (s.tradesThisTurn >= MAX_TRADES_PER_TURN) throw new GameError('Слишком много предложений за ход');
     this.validateTrade(o);
     s.trade = { ...o, giveCells: [...o.giveCells], getCells: [...o.getCells] };
+    s.tradeRound = 0;
+    s.tradePrev = null;
     s.tradeResume = s.phase;
     s.tradesThisTurn++;
     s.phase = 'trade';
@@ -972,6 +978,28 @@ export class Game {
     const moreOrSameCells = prev.giveCells.every((c) => o.giveCells.includes(c));
     if (!moreOrSameCells || o.giveMoney < prev.giveMoney || o.getMoney > prev.getMoney) return false;
     return o.giveCells.length > prev.giveCells.length || o.giveMoney > prev.giveMoney || o.getMoney < prev.getMoney;
+  }
+
+  /** Торг: вместо ответа — свои условия той же сделки. Теперь решать тому, кто предлагал. */
+  private counterTrade(by: number, o: TradeOffer): void {
+    const s = this.state;
+    const cur = s.trade;
+    if (s.phase !== 'trade' || !cur) throw new GameError('Нет предложения');
+    if (by !== cur.to) throw new GameError('Сейчас решает другой игрок');
+    if ((s.tradeRound ?? 0) >= MAX_COUNTERS) throw new GameError('Торг затянулся — примите или отклоните сделку');
+    if (o.to !== cur.from) throw new GameError('Встречное предложение отправляется тому, кто предложил сделку');
+    const same = (a: number[], b: number[]) => a.length === b.length && a.every((x) => b.includes(x));
+    if (same(o.giveCells, cur.getCells) && same(o.getCells, cur.giveCells) && o.giveMoney === cur.getMoney && o.getMoney === cur.giveMoney) {
+      throw new GameError('Условия не изменились — поменяйте что-нибудь или примите сделку');
+    }
+    this.validateTrade(o);
+    // Прежний вариант не устроил — запоминаем, как отказ.
+    (s.rejectedOffers ??= {})[dealKey(cur)] = { giveCells: [...cur.giveCells], giveMoney: cur.giveMoney, getMoney: cur.getMoney };
+    s.tradePrev = cur;
+    s.trade = { ...o, giveCells: [...o.giveCells], getCells: [...o.getCells] };
+    s.tradeRound = (s.tradeRound ?? 0) + 1;
+    this.emit({ kind: 'counter', offer: s.trade, prev: cur });
+    this.log(`${this.player(by).name} торгуется: встречное предложение для ${this.player(cur.from).name}.`);
   }
 
   private answerTrade(accept: boolean): void {
@@ -995,6 +1023,8 @@ export class Game {
     this.log(`${this.player(o.to).name} ${accept ? 'принимает' : 'отклоняет'} обмен.`);
     s.phase = s.tradeResume ?? 'end';
     s.trade = null;
+    s.tradeRound = 0;
+    s.tradePrev = null;
     s.tradeResume = null;
   }
 

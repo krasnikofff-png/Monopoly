@@ -1,5 +1,5 @@
 import { BOARD, JAIL_FINE, groupCells } from '../data/board';
-import { Game } from './game';
+import { Game, MAX_COUNTERS } from './game';
 import { GROUP_TRAFFIC, getPersona, type Persona } from './personas';
 import type { Action, ColorGroup, TradeOffer } from './types';
 
@@ -72,6 +72,39 @@ export function botAcceptsTrade(game: Game, pid: number, o: TradeOffer): boolean
   const ps = personaOf(game, pid);
   const mood = ps.noise ? (chance(game, pid, 11) * 2 - 1) * ps.noise * 2000 : 0;
   return tradeGain(game, pid, o, ps) > ps.acceptMargin + mood;
+}
+
+/**
+ * Встречное предложение бота: те же улицы, но деньги — так, чтобы сделка его устроила,
+ * плюс «запас на торг». С каждым раундом запас тает: бот уступает, и торг сходится.
+ */
+function counterOffer(game: Game, pid: number, o: TradeOffer): Action | null {
+  const s = game.state;
+  const ps = personaOf(game, pid);
+  const round = s.tradeRound ?? 0;
+  if (!ps.haggle || round >= MAX_COUNTERS) return null;
+  const gain = tradeGain(game, pid, o, ps);
+  const cushion = ps.haggle * 0.6 ** Math.floor(round / 2) * (ps.noise ? 0.5 + chance(game, pid, 21 + round) : 1);
+  const need = Math.ceil((ps.acceptMargin + cushion - gain) / 100) * 100;
+  if (need <= 0) return null;
+  // Сколько денег бот получает в итоге (отрицательное — платит сам).
+  let net = o.giveMoney - o.getMoney + need;
+  const proposer = game.player(o.from);
+  if (net > proposer.money) net = Math.floor(proposer.money / 100) * 100;
+  const offer: TradeOffer = {
+    from: pid,
+    to: o.from,
+    giveCells: [...o.getCells],
+    getCells: [...o.giveCells],
+    giveMoney: Math.max(0, -net),
+    getMoney: Math.max(0, net),
+  };
+  // Даже с доплатой сделка не нужна — тогда просто отказ.
+  const mirrored: TradeOffer = { from: o.from, to: pid, giveCells: offer.getCells, getCells: offer.giveCells, giveMoney: offer.getMoney, getMoney: offer.giveMoney };
+  if (tradeGain(game, pid, mirrored, ps) <= ps.acceptMargin) return null;
+  const { from: _from, ...rest } = offer;
+  const action: Action = { type: 'counterTrade', offer: rest };
+  return game.can(pid, action) ? action : null;
 }
 
 function groupFree(game: Game, group: ColorGroup): boolean {
@@ -289,7 +322,8 @@ export function botDecide(game: Game, playerId: number): Action | null {
       return raiseMoney(game, playerId) ?? { type: 'bankrupt' };
     }
     case 'trade':
-      return botAcceptsTrade(game, playerId, s.trade!) ? { type: 'acceptTrade' } : { type: 'rejectTrade' };
+      if (botAcceptsTrade(game, playerId, s.trade!)) return { type: 'acceptTrade' };
+      return counterOffer(game, playerId, s.trade!) ?? { type: 'rejectTrade' };
     case 'end':
       return tryManage(game, playerId, ps) ?? { type: 'endTurn' };
   }

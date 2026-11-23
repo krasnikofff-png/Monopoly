@@ -435,6 +435,76 @@ describe('Игровой движок', () => {
     expect(botDecide(g, 1)?.type).not.toBe('proposeTrade');
   });
 
+  it('торг: бот отвечает встречным предложением, сделка проходит на новых условиях', () => {
+    const g = twoPlayers();
+    const s = g.state;
+    s.players[1].style = 'mikhalych';
+    const brown = BOARD.filter((c) => c.group === 'brown').map((c) => c.id);
+    // У человека одна коричневая, у бота — вторая; человек хочет её почти даром.
+    s.cells[brown[0]].owner = 0;
+    s.cells[brown[1]].owner = 1;
+    s.current = 0;
+    s.phase = 'roll';
+    g.dispatch(0, { type: 'proposeTrade', offer: { to: 1, giveCells: [], getCells: [brown[1]], giveMoney: 10, getMoney: 0 } });
+    const answer = botDecide(g, 1);
+    expect(answer?.type).toBe('counterTrade');
+    g.dispatch(1, answer!);
+    expect(s.phase).toBe('trade');
+    expect(g.actor()).toBe(0);
+    expect(s.tradeRound).toBe(1);
+    const asked = s.trade!.getMoney;
+    expect(asked).toBeGreaterThan(10);
+    const before = s.players[0].money;
+    g.dispatch(0, { type: 'acceptTrade' });
+    expect(s.cells[brown[1]].owner).toBe(0);
+    expect(s.players[0].money).toBe(before - asked);
+    expect(s.phase).toBe('roll');
+  });
+
+  it('торг: человек торгуется с ботом, бот уступает, но не бесконечно', () => {
+    const g = twoPlayers();
+    const s = g.state;
+    s.players[1].style = 'leva';
+    const brown = BOARD.filter((c) => c.group === 'brown').map((c) => c.id);
+    s.cells[brown[0]].owner = 0;
+    s.cells[brown[1]].owner = 1;
+    s.current = 0;
+    s.phase = 'roll';
+    g.dispatch(0, { type: 'proposeTrade', offer: { to: 1, giveCells: [], getCells: [brown[1]], giveMoney: 100, getMoney: 0 } });
+    const asks: number[] = [];
+    for (let i = 0; i < 10 && s.phase === 'trade'; i++) {
+      const a = botDecide(g, 1)!;
+      if (a.type !== 'counterTrade') break;
+      g.dispatch(1, a);
+      asks.push(s.trade!.getMoney);
+      // Человек снова предлагает мало — меняет сумму на 100 больше, чем раньше.
+      if (s.tradeRound! >= 6) break;
+      g.dispatch(0, { type: 'counterTrade', offer: { to: 1, giveCells: [], getCells: [brown[1]], giveMoney: 100 + 100 * (i + 1), getMoney: 0 } });
+    }
+    expect(asks.length).toBeGreaterThan(1);
+    // Бот уступает: каждое следующее требование не выше прежнего.
+    for (let i = 1; i < asks.length; i++) expect(asks[i]).toBeLessThanOrEqual(asks[i - 1]);
+    // После шести раундов торговаться нельзя — только принять или отклонить.
+    if (s.phase === 'trade' && s.tradeRound! >= 6) {
+      expect(g.can(g.actor(), { type: 'counterTrade', offer: { to: s.trade!.from, giveCells: [], getCells: [], giveMoney: 1, getMoney: 0 } })).toBe(false);
+    }
+  });
+
+  it('торг: нельзя прислать те же условия, Петя не торгуется', () => {
+    const g = twoPlayers();
+    const s = g.state;
+    s.players[1].style = 'petya';
+    const brown = BOARD.filter((c) => c.group === 'brown').map((c) => c.id);
+    s.cells[brown[0]].owner = 0;
+    s.cells[brown[1]].owner = 1;
+    s.current = 0;
+    s.phase = 'roll';
+    g.dispatch(0, { type: 'proposeTrade', offer: { to: 1, giveCells: [], getCells: [brown[1]], giveMoney: 10, getMoney: 0 } });
+    const same = { type: 'counterTrade' as const, offer: { to: 0, giveCells: [brown[1]], getCells: [], giveMoney: 0, getMoney: 10 } };
+    expect(g.can(1, same)).toBe(false);
+    expect(botDecide(g, 1)?.type).not.toBe('counterTrade');
+  });
+
   it('боты доигрывают партию до конца без ошибок', () => {
     for (let seed = 1; seed <= 30; seed++) {
       const g = Game.create(
