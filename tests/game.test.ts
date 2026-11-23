@@ -472,7 +472,7 @@ describe('Игровой движок', () => {
     s.phase = 'roll';
     g.dispatch(0, { type: 'proposeTrade', offer: { to: 1, giveCells: [], getCells: [brown[1]], giveMoney: 100, getMoney: 0 } });
     const asks: number[] = [];
-    for (let i = 0; i < 10 && s.phase === 'trade'; i++) {
+    for (let i = 0; i < 10 && (s.phase as string) === 'trade'; i++) {
       const a = botDecide(g, 1)!;
       if (a.type !== 'counterTrade') break;
       g.dispatch(1, a);
@@ -485,7 +485,7 @@ describe('Игровой движок', () => {
     // Бот уступает: каждое следующее требование не выше прежнего.
     for (let i = 1; i < asks.length; i++) expect(asks[i]).toBeLessThanOrEqual(asks[i - 1]);
     // После шести раундов торговаться нельзя — только принять или отклонить.
-    if (s.phase === 'trade' && s.tradeRound! >= 6) {
+    if ((s.phase as string) === 'trade' && s.tradeRound! >= 6) {
       expect(g.can(g.actor(), { type: 'counterTrade', offer: { to: s.trade!.from, giveCells: [], getCells: [], giveMoney: 1, getMoney: 0 } })).toBe(false);
     }
   });
