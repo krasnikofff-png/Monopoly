@@ -2667,3 +2667,7 @@ button {
   word-break: break-word;
   flex-shrink: 0;
 }
+img.ico {
+  object-fit: contain;
+  aspect-ratio: 1;
+}

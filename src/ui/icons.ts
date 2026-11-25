@@ -1,3 +1,4 @@
+import { CELL_IMAGES } from './cellImages';
 import { TOKEN_GRADIENTS } from './tokens';
 
 // Иконки клеток поля. Все рисунки — векторные (SVG), в едином «игрушечном» стиле:
@@ -473,5 +474,7 @@ export function installIcons(): void {
 }
 
 export function iconSvg(id: number, cls = 'ico'): string {
+  const img = CELL_IMAGES[id];
+  if (img) return `<img class="${cls}" src="${img}" alt="" draggable="false" aria-hidden="true">`;
   return `<svg class="${cls}" viewBox="0 0 100 100" aria-hidden="true"><use href="#ic-${id}"/></svg>`;
 }
