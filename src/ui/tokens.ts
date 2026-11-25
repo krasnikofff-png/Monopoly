@@ -1,10 +1,10 @@
 // Фишки игроков: хромированные фигурки (картинки), стоят на кружке цвета игрока.
-import carImg from './tokens/car.webp?inline';
-import catImg from './tokens/cat.webp?inline';
-import dogImg from './tokens/dog.webp?inline';
-import duckImg from './tokens/duck.webp?inline';
-import rocketImg from './tokens/rocket.webp?inline';
-import tramImg from './tokens/tram.webp?inline';
+import carImg from './tokens/car.webp';
+import catImg from './tokens/cat.webp';
+import dogImg from './tokens/dog.webp';
+import duckImg from './tokens/duck.webp';
+import rocketImg from './tokens/rocket.webp';
+import tramImg from './tokens/tram.webp';
 
 /** Градиенты металла (подключаются в installIcons; ими нарисованы некоторые значки клеток). */
 export const TOKEN_GRADIENTS = [

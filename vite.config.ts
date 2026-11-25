@@ -38,6 +38,11 @@ function offlineWorker(): Plugin {
 
 export default defineConfig({
   base: './',
-  build: { target: 'es2020' },
+  build: {
+    target: 'es2020',
+    // Картинки фишек и клеток — прямо внутри кода: одностраничная версия (claude.ai, офлайн-файл)
+    // не может подгружать отдельные файлы.
+    assetsInlineLimit: (file: string) => (file.endsWith('.webp') ? true : undefined),
+  },
   plugins: [offlineWorker()],
 });

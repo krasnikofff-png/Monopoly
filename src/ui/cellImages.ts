@@ -1,18 +1,18 @@
 // Значки особых клеток — нарисованные картинки (старт, тюрьма, вокзалы, службы, шанс, сюрприз…).
 // Улицы по-прежнему рисуются векторными значками из icons.ts.
-import chance from './cells/chance.webp?inline';
-import electric from './cells/electric.webp?inline';
-import gotojail from './cells/gotojail.webp?inline';
-import jail from './cells/jail.webp?inline';
-import park from './cells/park.webp?inline';
-import start from './cells/start.webp?inline';
-import stationBlue from './cells/station-blue.webp?inline';
-import stationGreen from './cells/station-green.webp?inline';
-import stationPurple from './cells/station-purple.webp?inline';
-import stationRed from './cells/station-red.webp?inline';
-import surprise from './cells/surprise.webp?inline';
-import tax from './cells/tax.webp?inline';
-import water from './cells/water.webp?inline';
+import chance from './cells/chance.webp';
+import electric from './cells/electric.webp';
+import gotojail from './cells/gotojail.webp';
+import jail from './cells/jail.webp';
+import park from './cells/park.webp';
+import start from './cells/start.webp';
+import stationBlue from './cells/station-blue.webp';
+import stationGreen from './cells/station-green.webp';
+import stationPurple from './cells/station-purple.webp';
+import stationRed from './cells/station-red.webp';
+import surprise from './cells/surprise.webp';
+import tax from './cells/tax.webp';
+import water from './cells/water.webp';
 
 export const CELL_IMAGES: Record<number, string> = {
   0: start,
