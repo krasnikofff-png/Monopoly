@@ -1091,8 +1091,23 @@ button {
 }
 .big-token {
   font-size: 72px;
-  line-height: 0;
-  animation: hop 0.6s ease-out infinite alternate;
+  line-height: 1;
+  /* место сверху: фигурка покачивается и не должна задевать край окна */
+  padding-top: 14px;
+  animation: float 1.6s ease-in-out infinite alternate;
+}
+@keyframes float {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .big-token {
+    animation: none;
+  }
 }
 
 /* ——— Обмен ——— */
