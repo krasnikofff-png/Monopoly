@@ -1,4 +1,4 @@
-import { TOKEN_GRADIENTS, TOKEN_SYMBOLS } from './tokens';
+import { TOKEN_GRADIENTS } from './tokens';
 
 // Иконки клеток поля. Все рисунки — векторные (SVG), в едином «игрушечном» стиле:
 // толстый тёмный контур, градиентная заливка, блики и мягкая тень снизу.
@@ -466,9 +466,6 @@ export function installIcons(): void {
   const symbols =
     Object.entries(ICONS)
       .map(([id, body]) => `<symbol id="ic-${id}" viewBox="0 0 100 100">${body}</symbol>`)
-      .join('') +
-    Object.entries(TOKEN_SYMBOLS)
-      .map(([id, body]) => `<symbol id="tok-${id}" viewBox="0 0 100 100" overflow="visible">${body}</symbol>`)
       .join('');
   const holder = document.createElement('div');
   holder.innerHTML = `<svg id="mm-icons" width="0" height="0" style="position:absolute" aria-hidden="true"><defs>${GRADIENTS}${TOKEN_GRADIENTS}</defs>${symbols}</svg>`;

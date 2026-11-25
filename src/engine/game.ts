@@ -41,7 +41,7 @@ export function dealKey(o: TradeOffer): string {
 }
 
 export const PLAYER_COLORS = ['#ff4d6d', '#3a86ff', '#2ec4b6', '#ffbe0b', '#9b5de5', '#fb5607'];
-export const PLAYER_TOKENS = ['car', 'hat', 'dog', 'rocket', 'cat', 'ship'];
+export const PLAYER_TOKENS = ['car', 'duck', 'dog', 'rocket', 'cat', 'tram'];
 const LOG_LIMIT = 200;
 
 export function formatMoney(n: number): string {

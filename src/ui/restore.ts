@@ -9,7 +9,7 @@ export const RESTORE_LABEL = 'Партия Давид — Яна (13:11)';
 export function restoredDavidYana(): GameState {
   const game = Game.create([
     { name: 'Давид', isBot: false, color: PLAYER_COLORS[0], token: 'car' },
-    { name: 'Яна', isBot: false, color: PLAYER_COLORS[1], token: 'hat' },
+    { name: 'Яна', isBot: false, color: PLAYER_COLORS[1], token: 'duck' },
   ]);
   const s = game.state;
   const david = [1, 3, 5, 6, 8, 13, 18, 24, 26, 32, 34, 35];
