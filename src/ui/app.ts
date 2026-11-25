@@ -9,7 +9,7 @@ import { Sound, type SoundName } from './sound';
 import { DEVICE_FULL, GameStore, TURN_SLOTS, exportCode, importCode, newGameId, type GameMeta, type TurnSnap } from './store';
 import { confetti, floatText, flyCoins, shake, tweenNumber } from './fx';
 import { Game, GameError, MAX_COUNTERS, PLAYER_COLORS, PLAYER_TOKENS, formatMoney } from '../engine/game';
-import type { Action, ColorGroup, FlowKind, GameEvent, GameState, StatCounter } from '../engine/types';
+import type { Action, ColorGroup, FlowKind, GameEvent, GameState, StatCounter, TradeOffer } from '../engine/types';
 
 type Notice = Extract<GameEvent, { kind: 'notice' }>;
 
@@ -843,14 +843,36 @@ export class App {
           shake(this.root.querySelector(`[data-chip="${e.player}"]`), 8);
           await this.showNotice({ kind: 'notice', tone: 'bad', title: 'Банкротство', text: `${game.player(e.player).name} выбывает из игры` });
           break;
+        case 'propose':
+          // Боты договариваются между собой — записываем ход переговоров, чтобы показать игрокам.
+          this.botTalk = this.isBotDeal(e.offer) ? [this.dealLine(e.offer, 'предлагает')] : null;
+          break;
         case 'counter':
           this.sfx('click');
+          if (this.botTalk && this.isBotDeal(e.offer)) this.botTalk.push(this.dealLine(e.offer, 'в ответ'));
           break;
         case 'trade': {
           const o = e.offer;
           this.sfx(e.accepted ? 'deal' : 'click');
           const names = (cells: number[], money: number) =>
             [...cells.map((id) => BOARD[id].short ?? BOARD[id].name), money ? formatMoney(money) : ''].filter(Boolean).join(', ') || 'ничего';
+          const talk = this.botTalk;
+          this.botTalk = null;
+          if (talk && this.isBotDeal(o)) {
+            // Длинный торг сокращаем: первое предложение, сколько раундов пропущено, последнее.
+            const lines = talk.length > 3 ? [talk[0], `… ещё ${talk.length - 2} ${plural(talk.length - 2, 'раунд', 'раунда', 'раундов')} торга …`, talk[talk.length - 1]] : [...talk];
+            lines.push(e.accepted ? `✅ ${game.player(o.to).name} соглашается` : `❌ ${game.player(o.to).name} отказывается`);
+            await this.showNotice({
+              kind: 'notice',
+              tone: e.accepted ? 'info' : 'bad',
+              title: e.accepted ? 'Боты договорились' : 'Боты не договорились',
+              text: '',
+              from: o.from,
+              to: o.to,
+              lines,
+            });
+            break;
+          }
           if (e.accepted) {
             await this.showNotice({
               kind: 'notice',
@@ -990,6 +1012,21 @@ export class App {
   }
 
   private modalResolve: (() => void) | null = null;
+  /** Ход переговоров между ботами (показывается одним сообщением в конце). */
+  private botTalk: string[] | null = null;
+
+  private isBotDeal(o: TradeOffer): boolean {
+    const g = this.game!;
+    return g.player(o.from).isBot && g.player(o.to).isBot;
+  }
+
+  /** «Лёва предлагает: Капотня + 500 ₽ за Бирюлёво». */
+  private dealLine(o: TradeOffer, verb: string): string {
+    const g = this.game!;
+    const what = (cells: number[], money: number) =>
+      [...cells.map((id) => BOARD[id].short ?? BOARD[id].name), money ? formatMoney(money) : ''].filter(Boolean).join(' + ') || 'ничего';
+    return `${g.player(o.from).name} ${verb}: ${what(o.giveCells, o.giveMoney)} за ${what(o.getCells, o.getMoney)}`;
+  }
   private waitModalClosed(): Promise<void> {
     return new Promise((r) => (this.modalResolve = r));
   }
@@ -1639,7 +1676,8 @@ export class App {
     return `<div class="notice tone-${n.tone} ${enter ? 'enter' : ''}">
       <span class="npill">${esc(n.title)}</span>
       ${flow}
-      <div class="ntext">${esc(n.text)}</div>
+      ${n.text ? `<div class="ntext">${esc(n.text)}</div>` : ''}
+      ${n.lines?.length ? `<div class="nlines">${n.lines.map((l) => `<div>${esc(l)}</div>`).join('')}</div>` : ''}
       ${n.amount ? `<div class="namount">${formatMoney(n.amount)}</div>` : ''}
       ${cell}
       <button class="btn green nok" data-act="dismissNotice">OK</button>

@@ -965,6 +965,7 @@ export class Game {
     s.tradeResume = s.phase;
     s.tradesThisTurn++;
     s.phase = 'trade';
+    this.emit({ kind: 'propose', offer: s.trade });
     this.log(`${this.player(o.from).name} предлагает обмен игроку ${this.player(o.to).name}.`);
   }
 

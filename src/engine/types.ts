@@ -256,8 +256,11 @@ export type GameEvent =
       cell?: number;
       from?: number | null;
       to?: number | null;
+      /** Подробности списком (например, ход переговоров ботов). */
+      lines?: string[];
     }
   | { kind: 'build'; cell: number; houses: number }
+  | { kind: 'propose'; offer: TradeOffer }
   | { kind: 'trade'; offer: TradeOffer; accepted: boolean }
   | { kind: 'counter'; offer: TradeOffer; prev: TradeOffer }
   | { kind: 'bankrupt'; player: number }
